@@ -1,0 +1,40 @@
+﻿<UserControl x:Class="Mailzeug.MessageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:Mailzeug"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+             mc:Ignorable="d" 
+             d:DesignWidth="880" d:DesignHeight="850">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Label Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="4" Name="subject_box"/>
+        <Label Grid.Row="1" Grid.Column="0" Content="From:"/>
+        <Label Grid.Row="1" Grid.Column="1" Name="from_box"/>
+        <Label Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Name="timestamp_box"/>
+        <Label Grid.Row="2" Grid.Column="0" Content="To:"/>
+        <Label Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Name="to_box"/>
+        <Label Grid.Row="3" Grid.Column="0" Content="CC:"/>
+        <Label Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Name="cc_box"/>
+        <Label Grid.Row="4" Grid.Column="0" Content="BCC:"/>
+        <Label Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Name="bcc_box"/>
+        <Button Grid.Row="4" Grid.Column="3" Name="download_but" Content="Load Images" IsEnabled="False" Click="download_images"/>
+        <!--maybe full including sender, reply to, message id, and in reply to-->
+        <wv2:WebView2 Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Name="body_box"/>
+    </Grid>
+</UserControl>
