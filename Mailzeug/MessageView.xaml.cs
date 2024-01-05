@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -19,6 +20,9 @@ namespace Mailzeug {
         }
 
         private async void init_body(object sender, RoutedEventArgs e) {
+            if (DesignerProperties.GetIsInDesignMode(this)) {
+                return;
+            }
             await this.body_box.EnsureCoreWebView2Async();
             this.body_box.CoreWebView2.Settings.IsScriptEnabled = false;
             this.body_box.CoreWebView2.WebResourceRequested += this.web_resource_requested;
