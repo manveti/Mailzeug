@@ -20,11 +20,13 @@ namespace Mailzeug {
 
         private async void init_body(object sender, RoutedEventArgs e) {
             await this.body_box.EnsureCoreWebView2Async();
+            this.body_box.CoreWebView2.Settings.IsScriptEnabled = false;
             this.body_box.CoreWebView2.WebResourceRequested += this.web_resource_requested;
             this.body_box.CoreWebView2.AddWebResourceRequestedFilter(null, CoreWebView2WebResourceContext.All);
         }
 
         private void web_resource_requested(object sender, CoreWebView2WebResourceRequestedEventArgs e) {
+            //TODO: rework this to use a DownloadManager class to filter by message id, sender, and uri
             if (this.allow_downloads) {
                 return;
             }

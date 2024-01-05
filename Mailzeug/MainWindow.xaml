@@ -19,6 +19,7 @@
 
         <Menu Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3">
             <MenuItem Header="_File">
+                <MenuItem Header="_Options..." Click="open_options"/>
                 <!--...-->
                 <Separator/>
                 <MenuItem Header="E_xit" Click="exit_main"/>
@@ -26,7 +27,7 @@
             <!--other menus-->
         </Menu>
         
-        <!--Left Panel: Message List-->
+        <!--Left Panel: Folder/Message List-->
         <!--...-->
 
         <GridSplitter Grid.Row="1" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Stretch" Width="5"/>
