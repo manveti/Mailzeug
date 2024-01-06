@@ -9,7 +9,7 @@ namespace Mailzeug {
         public bool reset = false;
 
         public ConfigWindow() {
-            InitializeComponent();
+            this.InitializeComponent();
         }
 
         private void do_reset(object sender, RoutedEventArgs e) {

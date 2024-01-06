@@ -43,13 +43,13 @@ namespace Mailzeug {
             this.allow_downloads = allowDownloads;
             this.download_but.IsEnabled = false;
             this.download_requests.Clear();
-            this.subject_box.Content = message.subject;
-            this.timestamp_box.Content = message.timestamp.ToLocalTime().ToString("G");
-            this.from_box.Content = message.from;
-            this.to_box.Content = message.to;
-            this.cc_box.Content = message.cc;
-            this.bcc_box.Content = message.bcc;
-            this.body_box.NavigateToString(message.body);
+            this.subject_box.Content = message?.subject ?? "";
+            this.timestamp_box.Content = message?.timestamp_string ?? "";
+            this.from_box.Content = message?.from ?? "";
+            this.to_box.Content = message?.to ?? "";
+            this.cc_box.Content = message?.cc ?? "";
+            this.bcc_box.Content = message?.bcc ?? "";
+            this.body_box.NavigateToString(message?.body ?? "");
         }
 
         private void download_images(object sender, RoutedEventArgs e) {

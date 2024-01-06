@@ -12,24 +12,27 @@ namespace Mailzeug {
     /// Interaction logic for MainWindow.xaml
     /// </summary>
     public partial class MainWindow : Window {
-        private readonly NotifyIcon notifyIcon;
+        private readonly NotifyIcon notify_icon;
         private bool shutdown = false;
         public Config config;
+        private MailManager mail_manager;
 
         public MainWindow() {
             this.InitializeComponent();
-            this.notifyIcon = new NotifyIcon {
+            this.notify_icon = new NotifyIcon {
                 Icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Reflection.Assembly.GetExecutingAssembly().Location),
                 Visible = true,
-                ContextMenuStrip = this.setupNotifyMenu()
+                ContextMenuStrip = this.setup_notify_menu()
             };
-            System.Windows.Application.Current.Exit += (obj, args) => { this.notifyIcon.Dispose(); };
+            System.Windows.Application.Current.Exit += (obj, args) => { this.notify_icon.Dispose(); };
             string appDataDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string dataDir = Path.Join(appDataDir, "manveti", "Mailzeug");
             this.config = Config.load(dataDir);
+            this.mail_manager = new MailManager(this);
+            this.folder_list.ItemsSource = this.mail_manager.folders;
         }
 
-        private ContextMenuStrip setupNotifyMenu() {
+        private ContextMenuStrip setup_notify_menu() {
             ToolStripMenuItem openEnt = new ToolStripMenuItem("Open");
             openEnt.Click += this.open_main;
             ToolStripSeparator sep = new ToolStripSeparator();
@@ -74,6 +77,14 @@ namespace Mailzeug {
         private void exit_main(object sender, EventArgs e) {
             this.shutdown = true;
             this.Close();
+        }
+
+        private void folder_list_sel_changed(object sender, RoutedEventArgs e) {
+            this.mail_manager.select_folder(this.folder_list.SelectedItem as MailFolder);
+        }
+
+        private void message_list_sel_changed(object sender, RoutedEventArgs e) {
+            this.mail_manager.select_message(this.message_list.SelectedIndex);
         }
     }
 }
