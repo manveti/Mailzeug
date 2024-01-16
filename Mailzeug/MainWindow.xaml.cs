@@ -1,11 +1,12 @@
-﻿using Microsoft.Toolkit.Uwp.Notifications;
-//using CommunityToolkit.WinUI.Notifications;
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Collections.Generic;
 using System.IO;
 using System.Windows;
 using System.Windows.Forms;
+
+using Microsoft.Toolkit.Uwp.Notifications;
+//using CommunityToolkit.WinUI.Notifications;
 
 namespace Mailzeug {
     /// <summary>
@@ -45,7 +46,9 @@ namespace Mailzeug {
             this.Hide();
             if (!this.shutdown) {
                 e.Cancel = true;
+                return;
             }
+            this.mail_manager.shutdown();
         }
 
         private void open_main(object sender, EventArgs e) {

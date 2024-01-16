@@ -28,13 +28,13 @@ namespace Mailzeug {
         }
 
         public Config() {
+            this.key = new byte[256];
             this.reset(false);
         }
 
         public void reset(bool resetKey = true) {
             this.server = "";
             this.port = 993;
-            this.key = new byte[256];
             this.username_enc = null;
             this.password_enc = null;
             if (resetKey) {

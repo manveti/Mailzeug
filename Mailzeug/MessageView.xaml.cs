@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 
 using Microsoft.Web.WebView2.Core;
+using MimeKit;
 
 namespace Mailzeug {
     /// <summary>
@@ -43,13 +44,18 @@ namespace Mailzeug {
             this.allow_downloads = allowDownloads;
             this.download_but.IsEnabled = false;
             this.download_requests.Clear();
+            MimeMessage mime = message?.get_mime_message();
             this.subject_box.Content = message?.subject ?? "";
             this.timestamp_box.Content = message?.timestamp_string ?? "";
             this.from_box.Content = message?.from ?? "";
-            this.to_box.Content = message?.to ?? "";
-            this.cc_box.Content = message?.cc ?? "";
-            this.bcc_box.Content = message?.bcc ?? "";
-            this.body_box.NavigateToString(message?.body ?? "");
+            this.to_box.Content = mime?.To?.ToString() ?? "";
+            this.cc_box.Content = mime?.Cc?.ToString() ?? "";
+            this.bcc_box.Content = mime?.Bcc?.ToString() ?? "";
+            this.body_box.NavigateToString(mime?.HtmlBody ?? mime?.TextBody ?? "");
+            //TODO:
+            //foreach (MimeEntity att in mime.Attachments) {
+            //    attachment_list.Add(att.ContentDisposition.FileName);
+            //}
         }
 
         private void download_images(object sender, RoutedEventArgs e) {
