@@ -1,11 +1,14 @@
-﻿using MailKit;
-using MailKit.Net.Imap;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Threading;
 using System.Xml;
+
+using MailKit;
+using MailKit.Net.Imap;
 
 namespace Mailzeug {
     public class MailManager {
@@ -22,16 +25,24 @@ namespace Mailzeug {
 
         private const int SYNC_BATCH_SIZE = 100;
 
+        private static readonly TimeSpan FULL_SYNC_INTERVAL = new TimeSpan(1, 0, 0);
+        private static readonly TimeSpan IDLE_SYNC_INTERVAL = new TimeSpan(0, 9, 0);
+
         private bool running = true;
         private readonly MainWindow window;
         private ImapClient client;
         public object cache_lock;
-        public ObservableCollection<MailFolder> folders;
+        public BindingList<MailFolder> folders;
         public MailFolder selected_folder = null;
         public int selected_message = -1;
         private List<SyncTask> sync_tasks;
         private SyncTask priority_task = null;
         private ManualResetEvent priority_event;
+        private DateTimeOffset last_sync;
+        private object token_lock;
+        private CancellationTokenSource shutdown_token;
+        private CancellationTokenSource idle_token;
+        private Thread sync_thread;
 
         private Config config => this.window.config;
         private string data_dir => this.config.data_dir;
@@ -48,7 +59,7 @@ namespace Mailzeug {
             public FullSyncTask(IMailFolder imapFolder = null) : base(imapFolder) { }
         }
 
-        private class FolderSyncTask : SyncTask {
+        private abstract class FolderSyncTask : SyncTask {
             public readonly MailFolder mz_folder;
 
             public FolderSyncTask(MailFolder mzFolder, IMailFolder imapFolder) : base(imapFolder) {
@@ -72,13 +83,18 @@ namespace Mailzeug {
             this.cache_lock = new object();
             this.sync_tasks = new List<SyncTask>();
             this.priority_event = new ManualResetEvent(false);
+            this.last_sync = DateTimeOffset.MinValue;
+            this.token_lock = new object();
+            this.shutdown_token = new CancellationTokenSource();
+            this.idle_token = new CancellationTokenSource();
             this.load_cache();
-            //TODO: setup ongoing sync using this.sync_thread()
+            this.sync_thread = new Thread(this.sync_loop);
+            this.sync_thread.Start();
         }
 
         public void shutdown() {
             this.running = false;
-            //TODO: terminate ongoing sync
+            this.shutdown_token.Cancel();
             this.client.Disconnect(true);
         }
 
@@ -86,7 +102,7 @@ namespace Mailzeug {
             string messagesDir = Path.Join(this.data_dir, "messages");
             Directory.CreateDirectory(messagesDir);
             string foldersPath = Path.Join(messagesDir, "folders.xml");
-            ObservableCollection<MailFolder> folders = new ObservableCollection<MailFolder>();
+            BindingList<MailFolder> folders = new BindingList<MailFolder>();
             if (File.Exists(foldersPath)) {
                 List<MailFolder> folderList;
                 //TODO: error handling
@@ -133,21 +149,48 @@ namespace Mailzeug {
             }
         }
 
-        private void sync_thread() {
+        private void sync_loop() {
             this.client.Disconnected += (obj, args) => this.connect_client();
             //TODO: handler for this.client.FolderCreated
             this.connect_client();
             while (this.running) {
                 if (this.priority_task is not null) {
-                    //TODO: handle this.priority_task
+                    this.handle_sync_task(this.priority_task);
                     this.priority_task = null;
                     this.priority_event.Set();
                     continue;
                 }
-                //TODO:
-                //  if enough time has passed since last sync of folders: this.sync_folders()
-                //  if this.sync_tasks: pop and handle first sync task, e.g. this.sync_messages(this.sync_tasks[0] as FolderSyncTask)
-                //  idle for some interval with some cancellation token
+                SyncTask task = null;
+                if (DateTimeOffset.UtcNow >= this.last_sync + FULL_SYNC_INTERVAL) {
+                    task = new FullSyncTask();
+                }
+                else {
+                    lock (this.sync_tasks) {
+                        if (this.sync_tasks.Count > 0) {
+                            task = this.sync_tasks[0];
+                            this.sync_tasks.RemoveAt(0);
+                        }
+                    }
+                }
+                if (task is not null) {
+                    this.handle_sync_task(task);
+                    continue;
+                }
+                //TODO: error handling
+                //TODO: setup notify for idling
+                this.client.Inbox.Open(FolderAccess.ReadOnly);
+                this.idle_token.CancelAfter(IDLE_SYNC_INTERVAL);
+                this.client.Idle(this.idle_token.Token, this.shutdown_token.Token);
+                if (!this.running) {
+                    return;
+                }
+                this.client.Inbox.Close();
+                lock (this.token_lock) {
+                    this.idle_token.Dispose();
+                    this.idle_token = new CancellationTokenSource();
+                    this.shutdown_token.Dispose();
+                    this.shutdown_token = new CancellationTokenSource();
+                }
             }
         }
 
@@ -206,11 +249,40 @@ namespace Mailzeug {
             return insertIdx;
         }
 
+        private void handle_sync_task(SyncTask task) {
+            if (task is FullSyncTask fullSyncTask) {
+                if (fullSyncTask.imap_folder is null) {
+                    // full sync of all folders
+                    this.sync_folders();
+                }
+                else {
+                    // full sync of single folder (e.g. new folder was created)
+                    //TODO: handle full sync of single folder
+                }
+                this.last_sync = DateTimeOffset.UtcNow;
+                return;
+            }
+            if (task is FolderContentsSyncTask folderContentsSyncTask) {
+                this.sync_messages(folderContentsSyncTask);
+                return;
+            }
+            //TODO: MessageDownloadTask
+        }
+
         private void sync_folders() {
             List<IMailFolder> folders = new List<IMailFolder>();
             foreach (FolderNamespace ns in this.client.PersonalNamespaces) {
                 //TODO: error handling
-                folders.AddRange(this.client.GetFolders(ns, StatusItems.Count | StatusItems.UidNext | StatusItems.UidValidity, false));
+                folders.AddRange(
+                    this.client.GetFolders(ns, StatusItems.Count | StatusItems.UidNext | StatusItems.UidValidity, false, this.shutdown_token.Token)
+                );
+                if (!this.running) {
+                    return;
+                }
+                lock (this.token_lock) {
+                    this.shutdown_token.Dispose();
+                    this.shutdown_token = new CancellationTokenSource();
+                }
             }
             List<MailFolder> deleted = new List<MailFolder>(this.folders);
             bool dirty = false;
@@ -263,19 +335,8 @@ namespace Mailzeug {
                     }
                 }
                 foreach (MailFolder folder in deleted) {
-                    // delete any pending sync tasks on this folder
-                    lock (this.sync_tasks) {
-                        for (int i = this.sync_tasks.Count - 1; i >= 0; i--) {
-                            if ((this.sync_tasks[i] is FolderSyncTask folderTask) && (folderTask.mz_folder.name == folder.name)) {
-                                this.sync_tasks.RemoveAt(i);
-                            }
-                        }
-                    }
-                    folder.delete(messagesDir);
-                    if (this.selected_folder == folder) {
-                        this.select_folder(null);
-                    }
-                    this.folders.Remove(folder);
+                    this.delete_folder(messagesDir, folder);
+                    dirty = true;
                 }
             }
             if (dirty) {
@@ -290,6 +351,7 @@ namespace Mailzeug {
             else {
                 sync_new_messages(task);
             }
+            //TODO: update folders list in UI
             string messagesDir = Path.Join(this.data_dir, "messages");
             bool shardsChanged;
             lock (this.cache_lock) {
@@ -318,8 +380,15 @@ namespace Mailzeug {
             FetchRequest req = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Flags);
             task.imap_folder.Open(FolderAccess.ReadOnly);
             //TODO: error handling
-            IList<IMessageSummary> summaries = task.imap_folder.Fetch(uids, req);
+            IList<IMessageSummary> summaries = task.imap_folder.Fetch(uids, req, this.shutdown_token.Token);
+            if (!this.running) {
+                return;
+            }
             task.imap_folder.Close();
+            lock (this.token_lock) {
+                this.shutdown_token.Dispose();
+                this.shutdown_token = new CancellationTokenSource();
+            }
             int msgCount = 0;
             lock (this.cache_lock) {
                 foreach (IMessageSummary sum in summaries) {
@@ -347,6 +416,7 @@ namespace Mailzeug {
         }
 
         private void sync_new_messages(FolderContentsSyncTask task) {
+            //TODO: notify new unread messages
             int startIdx = task.offset + 1;
             if (startIdx > task.imap_folder.Count) {
                 return;
@@ -358,8 +428,15 @@ namespace Mailzeug {
             FetchRequest req = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Flags | MessageSummaryItems.Envelope);
             task.imap_folder.Open(FolderAccess.ReadOnly);
             //TODO: error handling
-            IList<IMessageSummary> summaries = task.imap_folder.Fetch(startIdx, endIdx, req);
+            IList<IMessageSummary> summaries = task.imap_folder.Fetch(startIdx, endIdx, req, this.shutdown_token.Token);
+            if (!this.running) {
+                return;
+            }
             task.imap_folder.Close();
+            lock (this.token_lock) {
+                this.shutdown_token.Dispose();
+                this.shutdown_token = new CancellationTokenSource();
+            }
             lock (this.cache_lock) {
                 foreach (IMessageSummary sum in summaries) {
                     if ((sum.Flags & MessageFlags.Deleted) != 0) {
@@ -377,6 +454,22 @@ namespace Mailzeug {
         }
 
         //TODO: handle MessageDownloadTask
+
+        public void delete_folder(string messagesDir, MailFolder folder) {
+            // delete any pending sync tasks on this folder
+            lock (this.sync_tasks) {
+                for (int i = this.sync_tasks.Count - 1; i >= 0; i--) {
+                    if ((this.sync_tasks[i] is FolderSyncTask folderTask) && (folderTask.mz_folder.name == folder.name)) {
+                        this.sync_tasks.RemoveAt(i);
+                    }
+                }
+            }
+            folder.delete(messagesDir);
+            if (this.selected_folder == folder) {
+                this.select_folder(null);
+            }
+            this.folders.Remove(folder);
+        }
 
         //TODO: other main functionality
 

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Xml;
@@ -9,7 +10,7 @@ using MailKit;
 
 namespace Mailzeug {
     [Serializable]
-    public class MailFolder {
+    public class MailFolder : INotifyPropertyChanged {
         protected string _name;
         [NonSerialized]
         public int unread;
@@ -26,9 +27,15 @@ namespace Mailzeug {
         [NonSerialized]
         public IMailFolder imap_folder;
 
+        [field: NonSerialized]
+        public event PropertyChangedEventHandler PropertyChanged;
+
         public string name {
             get { return this._name; }
-            set { this._name = value; }
+            set {
+                this._name = value;
+                this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.name)));
+            }
         }
 
         public string counts {
@@ -97,6 +104,7 @@ namespace Mailzeug {
                     this.messages_by_id[msg.id] = msg;
                 }
             }
+            this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
         }
 
         public bool save_messages(string messagesDir, bool forceAll = false) {
@@ -179,6 +187,7 @@ namespace Mailzeug {
             this.messages_by_id.Clear();
             this.dirty_shards.Clear();
             Directory.CreateDirectory(folderDir);
+            this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
         }
 
         private int get_insertion_index(MailMessage msg, int min = 0, int max = -1) {
@@ -200,6 +209,7 @@ namespace Mailzeug {
             this.messages.Insert(idx, msg);
             this.messages_by_id[msg.id] = msg;
             this.dirty_shards.Add(shard_id(msg));
+            this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
         }
 
         public void set_read(uint uid, bool read) {
@@ -212,6 +222,13 @@ namespace Mailzeug {
             }
             this.dirty_shards.Add(shard_id(msg));
             msg.read = read;
+            if (read) {
+                this.unread -= 1;
+            }
+            else {
+                this.unread += 1;
+            }
+            this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
         }
 
         public void set_replied(uint uid, bool replied) {
@@ -234,6 +251,7 @@ namespace Mailzeug {
             this.dirty_shards.Add(shard_id(msg));
             this.messages.Remove(msg);
             this.messages_by_id.Remove(uid);
+            this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
         }
     }
 }
