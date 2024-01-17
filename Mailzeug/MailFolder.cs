@@ -203,7 +203,10 @@ namespace Mailzeug {
                 return max;
             }
             int mid = (min + max) / 2;
-            if (msg.id < this.messages[min].id) {
+            if (msg.id == this.messages[mid].id) {
+                return mid;
+            }
+            if (msg.id > this.messages[mid].id) {
                 return this.get_insertion_index(msg, min, mid);
             }
             return this.get_insertion_index(msg, mid + 1, max);
@@ -211,7 +214,13 @@ namespace Mailzeug {
 
         public void add_message(MailMessage msg) {
             int idx = this.get_insertion_index(msg);
-            this.messages.Insert(idx, msg);
+            if ((idx < this.messages.Count) && (this.messages[idx].id == msg.id)) {
+                // uid should be unique, so replace with latest copy
+                this.messages[idx] = msg;
+            }
+            else {
+                this.messages.Insert(idx, msg);
+            }
             this.messages_by_id[msg.id] = msg;
             this.dirty_shards.Add(shard_id(msg));
             this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
