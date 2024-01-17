@@ -19,19 +19,25 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Label Grid.Row="0" Grid.Column="0" Margin="1" Content="Server:"/>
-        <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="server_box"/>
-        <Label Grid.Row="1" Grid.Column="0" Margin="1" Content="Port:"/>
-        <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="port_box"/>
-        <Label Grid.Row="2" Grid.Column="0" Margin="1" Content="Username:"/>
-        <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="username_box"/>
-        <Label Grid.Row="3" Grid.Column="0" Margin="1" Content="Password:"/>
-        <PasswordBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="password_box"/>
+        <Label Grid.Row="0" Grid.Column="0" Margin="1" Content="IMAP Server:"/>
+        <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="imap_server_box"/>
+        <Label Grid.Row="1" Grid.Column="0" Margin="1" Content="IMAP Port:"/>
+        <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="imap_port_box"/>
+        <Label Grid.Row="2" Grid.Column="0" Margin="1" Content="SMTP Server:"/>
+        <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="smtp_server_box"/>
+        <Label Grid.Row="3" Grid.Column="0" Margin="1" Content="SMTP Port:"/>
+        <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="smtp_port_box"/>
+        <Label Grid.Row="4" Grid.Column="0" Margin="1" Content="Username:"/>
+        <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="username_box"/>
+        <Label Grid.Row="5" Grid.Column="0" Margin="1" Content="Password:"/>
+        <PasswordBox Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="password_box"/>
 
-        <Button Grid.Row="4" Grid.Column="0" Margin="1" Content="Reset" Click="do_reset"/>
-        <Button Grid.Row="4" Grid.Column="2" Margin="1" Content="Save" Click="do_ok"/>
-        <Button Grid.Row="4" Grid.Column="3" Margin="1" Content="Cancel" Click="do_cancel"/>
+        <Button Grid.Row="6" Grid.Column="0" Margin="1" Content="Reset" Click="do_reset"/>
+        <Button Grid.Row="6" Grid.Column="2" Margin="1" Content="Save" Click="do_ok"/>
+        <Button Grid.Row="6" Grid.Column="3" Margin="1" Content="Cancel" Click="do_cancel"/>
     </Grid>
 </Window>

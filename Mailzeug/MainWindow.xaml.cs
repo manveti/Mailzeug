@@ -58,8 +58,10 @@ namespace Mailzeug {
         private void open_options(object sender, EventArgs e) {
             ConfigWindow dlg = new ConfigWindow();
             dlg.Owner = this;
-            dlg.server_box.Text = this.config.server;
-            dlg.port_box.Text = this.config.port.ToString("d");
+            dlg.imap_server_box.Text = this.config.imap_server;
+            dlg.imap_port_box.Text = this.config.imap_port.ToString("d");
+            dlg.smtp_server_box.Text = this.config.smtp_server;
+            dlg.smtp_port_box.Text = this.config.smtp_port.ToString("d");
             dlg.username_box.Text = this.config.username ?? "";
             dlg.password_box.Password = this.config.password ?? "";
             dlg.ShowDialog();
@@ -70,8 +72,10 @@ namespace Mailzeug {
             if (dlg.reset) {
                 this.config.reset();
             }
-            this.config.server = dlg.server_box.Text;
-            this.config.port = int.Parse(dlg.port_box.Text);
+            this.config.imap_server = dlg.imap_server_box.Text;
+            this.config.imap_port = int.Parse(dlg.imap_port_box.Text);
+            this.config.smtp_server = dlg.smtp_server_box.Text;
+            this.config.smtp_port = int.Parse(dlg.smtp_port_box.Text);
             this.config.username = dlg.username_box.Text;
             this.config.password = dlg.password_box.Password;
             this.config.save();

@@ -10,8 +10,10 @@ namespace Mailzeug {
     public class Config {
         [NonSerialized]
         public string data_dir;
-        public string server;
-        public int port;
+        public string imap_server;
+        public int imap_port;
+        public string smtp_server;
+        public int smtp_port;
         [NonSerialized]
         protected byte[] key;
         protected byte[] username_enc;
@@ -33,8 +35,10 @@ namespace Mailzeug {
         }
 
         public void reset(bool resetKey = true) {
-            this.server = "";
-            this.port = 993;
+            this.imap_server = "";
+            this.imap_port = 993;
+            this.smtp_server = "";
+            this.smtp_port = 587;
             this.username_enc = null;
             this.password_enc = null;
             if (resetKey) {

@@ -15,8 +15,10 @@ namespace Mailzeug {
         private void do_reset(object sender, RoutedEventArgs e) {
             this.reset = true;
             Config cfg = new Config();
-            this.server_box.Text = cfg.server;
-            this.port_box.Text = cfg.port.ToString("d");
+            this.imap_server_box.Text = cfg.imap_server;
+            this.imap_port_box.Text = cfg.imap_port.ToString("d");
+            this.smtp_server_box.Text = cfg.smtp_server;
+            this.smtp_port_box.Text = cfg.smtp_port.ToString("d");
             this.username_box.Text = cfg.username ?? "";
             this.password_box.Password = cfg.password ?? "";
         }

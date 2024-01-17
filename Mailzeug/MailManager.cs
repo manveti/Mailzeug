@@ -95,6 +95,7 @@ namespace Mailzeug {
         public void shutdown() {
             this.running = false;
             this.shutdown_token.Cancel();
+            this.sync_thread.Join();
             this.client.Disconnect(true);
         }
 
@@ -196,7 +197,7 @@ namespace Mailzeug {
 
         private void connect_client() {
             //TODO: error handling
-            this.client.Connect(this.config.server, this.config.port, MailKit.Security.SecureSocketOptions.SslOnConnect);
+            this.client.Connect(this.config.imap_server, this.config.imap_port, MailKit.Security.SecureSocketOptions.SslOnConnect);
             this.client.Authenticate(this.config.username, this.config.password);
         }
 
