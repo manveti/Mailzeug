@@ -20,6 +20,7 @@
         <Menu Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3">
             <MenuItem Header="_File">
                 <MenuItem Header="_Options..." Click="open_options"/>
+                <MenuItem Header="View _Log..." Click="open_logfile"/>
                 <!--...-->
                 <Separator/>
                 <MenuItem Header="E_xit" Click="exit_main"/>

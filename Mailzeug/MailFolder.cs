@@ -182,7 +182,12 @@ namespace Mailzeug {
 
         public void purge(string messagesDir) {
             string folderDir = Path.Join(messagesDir, this.name);
-            Directory.Delete(folderDir, true);
+            try {
+                Directory.Delete(folderDir, true);
+            }
+            catch (DirectoryNotFoundException) {
+                // it's okay if the directory doesn't exist
+            }
             this.messages.Clear();
             this.messages_by_id.Clear();
             this.dirty_shards.Clear();

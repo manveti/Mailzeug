@@ -1,12 +1,13 @@
 ﻿using System;
 using System.ComponentModel;
-using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Forms;
 
 using Microsoft.Toolkit.Uwp.Notifications;
 //using CommunityToolkit.WinUI.Notifications;
+using NLog;
 
 namespace Mailzeug {
     /// <summary>
@@ -16,6 +17,7 @@ namespace Mailzeug {
         private readonly NotifyIcon notify_icon;
         private bool shutdown = false;
         public Config config;
+        private string log_file;
         private MailManager mail_manager;
 
         public MainWindow() {
@@ -29,6 +31,15 @@ namespace Mailzeug {
             string appDataDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string dataDir = Path.Join(appDataDir, "manveti", "Mailzeug");
             this.config = Config.load(dataDir);
+            this.log_file = Path.Join(dataDir, "activity.log");
+            NLog.Config.LoggingConfiguration logConfig = new NLog.Config.LoggingConfiguration();
+            NLog.Targets.FileTarget logTarget = new NLog.Targets.FileTarget("logfile") {
+                DeleteOldFileOnStartup = true,
+                FileName = this.log_file,
+                Layout = "${longdate}${onhasproperties: ${event-properties:source}} ${uppercase:${level}} ${message}${onexception:${newline}${exception}}"
+            };
+            logConfig.AddRule(LogLevel.Info, LogLevel.Fatal, logTarget);
+            LogManager.Configuration = logConfig;
             this.mail_manager = new MailManager(this);
             this.folder_list.ItemsSource = this.mail_manager.folders;
         }
@@ -79,6 +90,13 @@ namespace Mailzeug {
             this.config.username = dlg.username_box.Text;
             this.config.password = dlg.password_box.Password;
             this.config.save();
+        }
+
+        private void open_logfile(object sender, EventArgs e) {
+            if (!File.Exists(this.log_file)) {
+                return;
+            }
+            Process.Start("notepad", this.log_file);
         }
 
         private void exit_main(object sender, EventArgs e) {
