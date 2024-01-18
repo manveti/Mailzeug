@@ -1,8 +1,11 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Forms;
 
 using Microsoft.Toolkit.Uwp.Notifications;
@@ -104,12 +107,39 @@ namespace Mailzeug {
             this.Close();
         }
 
+        private void fix_listview_column_widths(System.Windows.Controls.ListView listView) {
+            GridView gridView = listView.View as GridView;
+            if (gridView is null) { return; }
+            foreach (GridViewColumn col in gridView.Columns) {
+                col.Width = col.ActualWidth;
+                col.Width = double.NaN;
+            }
+        }
+
+        public void fix_folder_list_column_sizes() {
+            this.folder_list.Dispatcher.Invoke(() => this.fix_listview_column_widths(this.folder_list));
+        }
+
         private void folder_list_sel_changed(object sender, RoutedEventArgs e) {
             this.mail_manager.select_folder(this.folder_list.SelectedItem as MailFolder);
         }
 
         private void message_list_sel_changed(object sender, RoutedEventArgs e) {
             this.mail_manager.select_message(this.message_list.SelectedIndex);
+        }
+    }
+
+    public class FontWeightConverter : IValueConverter {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture) {
+            bool isBold = (bool)value;
+            if (isBold) {
+                return FontWeights.Bold;
+            }
+            return FontWeights.Normal;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) {
+            throw new NotImplementedException();
         }
     }
 }

@@ -373,6 +373,7 @@ namespace Mailzeug {
             }
             if (dirty) {
                 this.save_cache();
+                this.window.fix_folder_list_column_sizes();
             }
             this.sync_log.Info("Done syncing all folders");
         }
@@ -452,6 +453,7 @@ namespace Mailzeug {
             lock (this.sync_tasks) {
                 this.sync_tasks.Add(new FolderContentsSyncTask(task.mz_folder, task.imap_folder, task.offset + msgCount));
             }
+            this.window.fix_folder_list_column_sizes();
             this.sync_log.Info("Synced {count} old messages in {name}", msgCount, mzFolder.name);
         }
 
@@ -492,6 +494,7 @@ namespace Mailzeug {
                     task.mz_folder.add_message(new MailMessage(sum));
                 }
             }
+            this.window.fix_folder_list_column_sizes();
             if ((endIdx < 0) || (summaries.Count <= 0)) {
                 this.sync_log.Info("Synced all new messages in {name}", task.mz_folder.name);
                 return;

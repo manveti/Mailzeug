@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 
 using MailKit;
@@ -9,17 +8,24 @@ namespace Mailzeug {
     [Serializable]
     public class MailMessage {
         public readonly uint id;
-        public readonly string _subject;
+        protected readonly string _subject;
         public readonly DateTimeOffset timestamp;
-        public readonly string _from;
+        protected readonly string _from;
         public byte[] source;
         public bool read;
-        public bool replied;
+        protected bool _replied;
 
         public string subject => this._subject;
         public string timestamp_string => this.timestamp.ToLocalTime().ToString("G");
         public string from => this._from;
         public bool loaded => this.source is not null;
+
+        public bool unread => !this.read;
+
+        public bool replied {
+            get { return this._replied; }
+            set { this._replied = value; }
+        }
 
         public MailMessage(IMessageSummary summary) {
             this.id = summary.UniqueId.Id;

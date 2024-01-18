@@ -6,6 +6,11 @@
         xmlns:local="clr-namespace:Mailzeug"
         mc:Ignorable="d"
         Title="Mailzeug" Left="0" Top="41" Width="1240" Height="850" Closing="close_main">
+    <Window.Resources>
+        <ResourceDictionary>
+            <local:FontWeightConverter x:Key="FontWeightConverter"/>
+        </ResourceDictionary>
+    </Window.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="2*"/>
@@ -79,9 +84,11 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <TextBlock Grid.Row="0" Grid.Column="0" Margin="2" Text="{Binding from, Mode=OneWay}"/>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Margin="2" Text="{Binding from, Mode=OneWay}"
+                                       FontWeight="{Binding unread, Converter={StaticResource FontWeightConverter}}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Margin="2" Text="{Binding timestamp_string, Mode=OneWay}"/>
-                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="2" Text="{Binding subject, Mode=OneWay}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="2" Text="{Binding subject, Mode=OneWay}"
+                                       FontWeight="{Binding unread, Converter={StaticResource FontWeightConverter}}"/>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
