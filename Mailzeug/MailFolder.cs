@@ -7,6 +7,7 @@ using System.Runtime.Serialization;
 using System.Xml;
 
 using MailKit;
+using MimeKit;
 
 namespace Mailzeug {
     [Serializable]
@@ -266,6 +267,16 @@ namespace Mailzeug {
             this.messages.Remove(msg);
             this.messages_by_id.Remove(uid);
             this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
+        }
+
+        public void load_message(uint uid, MimeMessage message) {
+            if (!this.messages_by_id.ContainsKey(uid)) {
+                //TODO: error
+                return;
+            }
+            MailMessage msg = this.messages_by_id[uid];
+            this.dirty_shards.Add(shard_id(msg));
+            msg.load(message);
         }
     }
 }

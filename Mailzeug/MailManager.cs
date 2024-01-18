@@ -9,6 +9,7 @@ using System.Xml;
 
 using MailKit;
 using MailKit.Net.Imap;
+using MimeKit;
 
 namespace Mailzeug {
     public class MailManager {
@@ -79,7 +80,13 @@ namespace Mailzeug {
             }
         }
 
-        //TODO: MessageDownloadTask
+        private class MessageDownloadTask : FolderSyncTask {
+            public readonly uint id;
+
+            public MessageDownloadTask(MailFolder mzFolder, IMailFolder imapFolder, uint id) : base(mzFolder, imapFolder) {
+                this.id = id;
+            }
+        }
 
         public MailManager(MainWindow window) {
             this.window = window;
@@ -288,7 +295,10 @@ namespace Mailzeug {
                 this.sync_messages(folderContentsSyncTask);
                 return;
             }
-            //TODO: MessageDownloadTask
+            if (task is MessageDownloadTask messageDownloadTask) {
+                this.sync_message_body(messageDownloadTask);
+                return;
+            }
         }
 
         private void sync_folders() {
@@ -385,7 +395,6 @@ namespace Mailzeug {
             else {
                 sync_new_messages(task);
             }
-            //TODO: update folders list in UI
             string messagesDir = Path.Join(this.data_dir, "messages");
             bool shardsChanged;
             lock (this.cache_lock) {
@@ -505,7 +514,47 @@ namespace Mailzeug {
             this.sync_log.Info("Synced {count} new messages in {name}", summaries.Count, task.mz_folder.name);
         }
 
-        //TODO: handle MessageDownloadTask
+        private void sync_message_body(MessageDownloadTask task) {
+            MailMessage msg;
+            lock (this.cache_lock) {
+                if (!task.mz_folder.messages_by_id.ContainsKey(task.id)) {
+                    this.sync_log.Debug("Message {uid} no longer present in {name}", task.id, task.mz_folder.name);
+                    return;
+                }
+                msg = task.mz_folder.messages_by_id[task.id];
+                if (task.mz_folder.messages_by_id[task.id].loaded) {
+                    this.sync_log.Debug("Message {uid} in {name} already downloaded", task.id, task.mz_folder.name);
+                    return;
+                }
+            }
+            this.sync_log.Info("Downloading message {uid} body in {name}", task.id, task.mz_folder.name);
+            task.imap_folder.Open(FolderAccess.ReadOnly);
+            MimeMessage imapMsg;
+            try {
+                //TODO: error handling
+                imapMsg = task.imap_folder.GetMessage(new MailKit.UniqueId(task.id), this.shutdown_token.Token);
+            }
+            catch (OperationCanceledException) {
+                this.sync_log.Info("Terminating download due to shutdown");
+                return;
+            }
+            task.imap_folder.Close();
+            lock (this.token_lock) {
+                this.shutdown_token.Dispose();
+                this.shutdown_token = new CancellationTokenSource();
+                this.shutdown_token.Token.ThrowIfCancellationRequested();
+            }
+            task.mz_folder.load_message(task.id, imapMsg);
+            string messagesDir = Path.Join(this.data_dir, "messages");
+            bool shardsChanged;
+            lock (this.cache_lock) {
+                shardsChanged = task.mz_folder.save_messages(messagesDir);
+            }
+            if (shardsChanged) {
+                this.save_folders(messagesDir);
+            }
+            this.sync_log.Info("Downloaded message {uid} body in {name}", task.id, task.mz_folder.name);
+        }
 
         public void delete_folder(string messagesDir, MailFolder folder) {
             // delete any pending sync tasks on this folder
@@ -536,7 +585,7 @@ namespace Mailzeug {
             this.window.message_list.ItemsSource = sel?.messages;
         }
 
-        public void select_message(int idx) {
+        async public void select_message(int idx) {
             if (idx == this.selected_message) {
                 return;
             }
@@ -544,7 +593,22 @@ namespace Mailzeug {
             if ((this.selected_folder is not null) && (idx >= 0) && (idx < this.selected_folder.messages.Count)) {
                 sel = this.selected_folder.messages[idx];
             }
-            //TODO: if sel.source is null: download
+            if ((sel is not null) && (!sel.loaded) && (this.client.IsConnected)) {
+                this.user_log.Info("Downloading message {uid} in {folder}", sel.id, this.selected_folder.name);
+                //TODO: make sure we only have one priority event in flight at a time (async means they could pile up)
+                this.priority_event.Reset();
+                this.priority_task = new MessageDownloadTask(this.selected_folder, this.selected_folder.imap_folder, sel.id);
+                lock (this.token_lock) {
+                    this.idle_token.Cancel();
+                }
+                // do this async so we don't block events in main thread; otherwise sync thread and main thread may block on each other
+                await System.Threading.Tasks.Task.Run(() => this.priority_event.WaitOne());
+                lock (this.token_lock) {
+                    this.idle_token.Dispose();
+                    this.idle_token = new CancellationTokenSource();
+                    this.idle_token.Token.ThrowIfCancellationRequested();
+                }
+            }
             this.window.message_ctrl.show_message(sel, false);
         }
 
