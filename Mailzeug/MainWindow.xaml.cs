@@ -8,8 +8,6 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Forms;
 
-using Microsoft.Toolkit.Uwp.Notifications;
-//using CommunityToolkit.WinUI.Notifications;
 using NLog;
 
 namespace Mailzeug {
@@ -67,6 +65,7 @@ namespace Mailzeug {
 
         private void open_main(object sender, EventArgs e) {
             this.Show();
+            this.Activate();
         }
 
         private void open_options(object sender, EventArgs e) {

@@ -9,6 +9,7 @@ using System.Xml;
 
 using MailKit;
 using MailKit.Net.Imap;
+using Microsoft.Toolkit.Uwp.Notifications;
 using MimeKit;
 
 namespace Mailzeug {
@@ -28,6 +29,11 @@ namespace Mailzeug {
 
         private static readonly TimeSpan FULL_SYNC_INTERVAL = new TimeSpan(1, 0, 0);
         private static readonly TimeSpan IDLE_SYNC_INTERVAL = new TimeSpan(0, 9, 0);
+
+        private const string NOTIFY_ARG_FOLDER = "folder";
+        private const string NOTIFY_ARG_MESSAGE = "message";
+        private const string NOTIFY_ARG_ACTION = "action";
+        private const string NOTIFY_ACTION_DELETE = "delete";
 
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
@@ -103,6 +109,7 @@ namespace Mailzeug {
             this.idle_token = new CancellationTokenSource();
             this.idle_token.Token.ThrowIfCancellationRequested();
             this.load_cache();
+            ToastNotificationManagerCompat.OnActivated += this.activated;
             this.sync_thread = new Thread(this.sync_loop);
             this.sync_thread.Start();
         }
@@ -556,7 +563,7 @@ namespace Mailzeug {
             this.sync_log.Info("Downloaded message {uid} body in {name}", task.id, task.mz_folder.name);
         }
 
-        public void delete_folder(string messagesDir, MailFolder folder) {
+        private void delete_folder(string messagesDir, MailFolder folder) {
             // delete any pending sync tasks on this folder
             lock (this.sync_tasks) {
                 for (int i = this.sync_tasks.Count - 1; i >= 0; i--) {
@@ -572,7 +579,19 @@ namespace Mailzeug {
             this.folders.Remove(folder);
         }
 
-        //TODO: other main functionality
+        private void notify_message(MailFolder folder, MailMessage msg) {
+            ToastArguments args = new ToastArguments().Add(NOTIFY_ARG_FOLDER, folder.name).Add(NOTIFY_ARG_MESSAGE, (int)(msg.id));
+            ToastContentBuilder toast = new ToastContentBuilder().AddText(msg.subject).AddText(msg.from);
+            // add args to toast before adding delete arg
+            foreach (KeyValuePair<string, string> arg in args) {
+                toast = toast.AddArgument(arg.Key, arg.Value);
+            }
+            // add delete arg for button
+            args = args.Add(NOTIFY_ARG_ACTION, NOTIFY_ACTION_DELETE);
+            toast.AddCustomTimeStamp(msg.timestamp.LocalDateTime).AddButton("Delete", ToastActivationType.Foreground, args.ToString()).AddAudio(
+                new ToastAudio() { Silent = true }
+            ).Show();
+        }
 
         public void select_folder(MailFolder sel) {
             if (sel == this.selected_folder) {
@@ -610,6 +629,49 @@ namespace Mailzeug {
                 }
             }
             this.window.message_ctrl.show_message(sel, false);
+        }
+
+        public void select_message(string folder, uint id) {
+            MailFolder selFolder = null;
+            int msgIdx = -1;
+            lock (this.cache_lock) {
+                foreach (MailFolder fld in this.folders) {
+                    if (fld.name == folder) {
+                        selFolder = fld;
+                        break;
+                    }
+                }
+                if (selFolder is null) {
+                    return;
+                }
+                for (int i = 0; i < selFolder.messages.Count; i++) {
+                    if (selFolder.messages[i].id == id) {
+                        msgIdx = i;
+                        break;
+                    }
+                }
+            }
+            if (msgIdx < 0) {
+                return;
+            }
+            this.window.folder_list.SelectedItem = selFolder;
+            this.window.message_list.SelectedIndex = msgIdx;
+            this.window.Show();
+            this.window.Activate();
+        }
+
+        public void activated(ToastNotificationActivatedEventArgsCompat e) {
+            ToastArguments args = ToastArguments.Parse(e.Argument);
+            if ((!args.Contains(NOTIFY_ARG_FOLDER)) || (!args.Contains(NOTIFY_ARG_MESSAGE))) {
+                return;
+            }
+            string folder = args[NOTIFY_ARG_FOLDER];
+            uint msgId = (uint)(args.GetInt(NOTIFY_ARG_MESSAGE));
+            if ((args.Contains(NOTIFY_ARG_ACTION)) && (args[NOTIFY_ARG_ACTION] == NOTIFY_ACTION_DELETE)) {
+                //TODO: delete message
+                return;
+            }
+            this.window.Dispatcher.Invoke(() => this.select_message(folder, msgId));
         }
 
         //TODO: other handlers
