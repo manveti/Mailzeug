@@ -30,6 +30,8 @@ namespace Mailzeug {
         private static readonly TimeSpan FULL_SYNC_INTERVAL = new TimeSpan(1, 0, 0);
         private static readonly TimeSpan IDLE_SYNC_INTERVAL = new TimeSpan(0, 9, 0);
 
+        private static readonly TimeSpan NOTIFY_MAX_AGE = new TimeSpan(7, 0, 0, 0);
+
         private const string NOTIFY_ARG_FOLDER = "folder";
         private const string NOTIFY_ARG_MESSAGE = "message";
         private const string NOTIFY_ARG_ACTION = "action";
@@ -502,15 +504,25 @@ namespace Mailzeug {
                 this.shutdown_token = new CancellationTokenSource();
                 this.shutdown_token.Token.ThrowIfCancellationRequested();
             }
+            DateTimeOffset minNotify = DateTimeOffset.Now - NOTIFY_MAX_AGE;
+            List<MailMessage> notifyMessages = new List<MailMessage>();
             lock (this.cache_lock) {
                 foreach (IMessageSummary sum in summaries) {
                     if ((sum.Flags & MessageFlags.Deleted) != 0) {
                         continue;
                     }
-                    task.mz_folder.add_message(new MailMessage(sum));
+                    MailMessage msg = new MailMessage(sum);
+                    bool msgNew = task.mz_folder.add_message(msg);
+                    //TODO: select which folders to notify
+                    if ((msgNew) && (msg.unread) && (msg.timestamp >= minNotify) && (task.imap_folder.Attributes.HasFlag(FolderAttributes.Inbox))) {
+                        notifyMessages.Add(msg);
+                    }
                 }
             }
             this.window.fix_folder_list_column_sizes();
+            foreach (MailMessage msg in notifyMessages) {
+                this.notify_message(task.mz_folder, msg);
+            }
             if ((endIdx < 0) || (summaries.Count <= 0)) {
                 this.sync_log.Info("Synced all new messages in {name}", task.mz_folder.name);
                 return;

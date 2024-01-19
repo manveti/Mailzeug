@@ -213,7 +213,8 @@ namespace Mailzeug {
             return this.get_insertion_index(msg, mid + 1, max);
         }
 
-        public void add_message(MailMessage msg) {
+        public bool add_message(MailMessage msg) {
+            bool isNew = false;
             int idx = this.get_insertion_index(msg);
             if ((idx < this.messages.Count) && (this.messages[idx].id == msg.id)) {
                 // uid should be unique, so replace with latest copy
@@ -221,10 +222,12 @@ namespace Mailzeug {
             }
             else {
                 this.messages.Insert(idx, msg);
+                isNew = true;
             }
             this.messages_by_id[msg.id] = msg;
             this.dirty_shards.Add(shard_id(msg));
             this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
+            return isNew;
         }
 
         public void set_read(uint uid, bool read) {
