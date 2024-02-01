@@ -8,12 +8,13 @@ namespace Mailzeug {
     [Serializable]
     public class MailMessage {
         public readonly uint id;
-        protected readonly string _subject;
-        public readonly DateTimeOffset timestamp;
-        protected readonly string _from;
+        protected string _subject;
+        public DateTimeOffset timestamp;
+        protected string _from;
         public byte[] source;
         public bool read;
         protected bool _replied;
+        public bool deleted;
 
         public string subject => this._subject;
         public string timestamp_string => this.timestamp.ToLocalTime().ToString("G");
@@ -29,12 +30,41 @@ namespace Mailzeug {
 
         public MailMessage(IMessageSummary summary) {
             this.id = summary.UniqueId.Id;
-            this._subject = summary.Envelope.Subject;
-            this.timestamp = summary.Date;
-            this._from = summary.Envelope.From.ToString();
             this.source = null;
-            this.read = (summary.Flags & MessageFlags.Seen) != 0;
-            this.replied = (summary.Flags & MessageFlags.Answered) != 0;
+            this.update(summary);
+        }
+
+        public bool update(IMessageSummary summary) {
+            bool dirty = false;
+            if (summary.Envelope.Subject != this._subject) {
+                this._subject = summary.Envelope.Subject;
+                dirty = true;
+            }
+            if (summary.Date != this.timestamp) {
+                this.timestamp = summary.Date;
+                dirty = true;
+            }
+            string from = summary.Envelope.From.ToString();
+            if (from != this._from) {
+                this._from = from;
+                dirty = true;
+            }
+            bool read = (summary.Flags & MessageFlags.Seen) != 0;
+            if (read != this.read) {
+                this.read = read;
+                dirty = true;
+            }
+            bool replied = (summary.Flags & MessageFlags.Answered) != 0;
+            if (replied != this._replied) {
+                this._replied = replied;
+                dirty = true;
+            }
+            bool deleted = (summary.Flags & MessageFlags.Deleted) != 0;
+            if (deleted != this.deleted) {
+                this.deleted = deleted;
+                dirty = true;
+            }
+            return dirty;
         }
 
         public void load(MimeMessage message) {

@@ -25,8 +25,11 @@ namespace Mailzeug {
         private const int WEIGHT_ALL = 10;
         private const int WEIGHT_NONE = 0;
 
+        private static readonly TimeSpan SAVE_INTERVAL = new TimeSpan(0, 0, 10);
+
         private const int SYNC_BATCH_SIZE = 100;
 
+        private static readonly TimeSpan FORCE_SYNC_INTERVAL = new TimeSpan(8, 0, 0);
         private static readonly TimeSpan FULL_SYNC_INTERVAL = new TimeSpan(1, 0, 0);
         private static readonly TimeSpan IDLE_SYNC_INTERVAL = new TimeSpan(0, 9, 0);
 
@@ -39,81 +42,158 @@ namespace Mailzeug {
 
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
-        private bool running = true;
         private readonly MainWindow window;
         private readonly NLog.Logger sync_log;
         private readonly NLog.Logger user_log;
+        private bool running = true;
+        private ManualResetEvent shutdown_event;
         private ImapClient client;
-        public object cache_lock;
+        public object folders_lock;
         public BindingList<MailFolder> folders;
         public MailFolder selected_folder = null;
         public int selected_message = -1;
-        private List<SyncTask> sync_tasks;
-        private SyncTask priority_task = null;
-        private ManualResetEvent priority_event;
-        private DateTimeOffset last_sync;
+        private LinkedList<SyncTask> sync_tasks;
+        private DateTimeOffset last_force_sync;
+        private DateTimeOffset last_full_sync;
         private object token_lock;
         private CancellationTokenSource shutdown_token;
         private CancellationTokenSource idle_token;
+        private Thread save_thread;
         private Thread sync_thread;
 
         private Config config => this.window.config;
         private string data_dir => this.config.data_dir;
+        private string messages_dir => Path.Join(this.data_dir, "messages");
+        private string folders_path => Path.Join(this.messages_dir, "folders.xml");
 
-        private class SyncTask {
-            public readonly IMailFolder imap_folder;
+        private abstract class SyncTask {
+            public readonly bool priority;
 
-            public SyncTask(IMailFolder imapFolder) {
-                this.imap_folder = imapFolder;
+            public SyncTask(bool priority = false) {
+                this.priority = priority;
             }
         }
 
-        private class FullSyncTask : SyncTask {
-            public FullSyncTask(IMailFolder imapFolder = null) : base(imapFolder) { }
+        private class FullFetchTask : SyncTask {
+            // perform a full fetch on all folders
+            // if force is true, check all messages, even if heuristics indicate nothing has changed
+            public readonly bool force;
+
+            public FullFetchTask(bool force = false, bool priority = false) : base(priority) {
+                this.force = force;
+            }
         }
 
         private abstract class FolderSyncTask : SyncTask {
-            public readonly MailFolder mz_folder;
+            // sync task which operates on a specific folder
+            public readonly MailFolder folder;
 
-            public FolderSyncTask(MailFolder mzFolder, IMailFolder imapFolder) : base(imapFolder) {
-                this.mz_folder = mzFolder;
+            public FolderSyncTask(MailFolder folder, bool priority = false) : base(priority) {
+                this.folder = folder;
             }
         }
 
-        private class FolderContentsSyncTask : FolderSyncTask {
-            public readonly int offset;
+        private class FolderFetchTask : FolderSyncTask {
+            // fetch the entire contents of a folder, starting at the specified offset
+            public int offset;
+            public HashSet<uint> unseen_ids;
 
-            public FolderContentsSyncTask(MailFolder mzFolder, IMailFolder imapFolder, int offset = 0) : base(mzFolder, imapFolder) {
+            public FolderFetchTask(MailFolder folder, int offset = 0, bool priority = false) : base(folder, priority) {
                 this.offset = offset;
+                this.unseen_ids = null;
             }
         }
 
-        private class MessageDownloadTask : FolderSyncTask {
+        private abstract class MessageSyncTask : FolderSyncTask {
+            // sync task which operates on a specific message
             public readonly uint id;
 
-            public MessageDownloadTask(MailFolder mzFolder, IMailFolder imapFolder, uint id) : base(mzFolder, imapFolder) {
+            public MessageSyncTask(MailFolder folder, uint id, bool priority = false) : base(folder, priority) {
                 this.id = id;
             }
         }
+
+        private class MessageStatusFetchTask : MessageSyncTask {
+            // fetch the status of a single message
+
+            public MessageStatusFetchTask(MailFolder folder, uint id, bool priority = false) : base(folder, id, priority) { }
+        }
+
+        private class MessageContentsFetchTask : MessageSyncTask {
+            // fetch the contents of a single message
+            public ManualResetEvent completed;
+
+            public MessageContentsFetchTask(MailFolder folder, uint id, bool priority = false) : base(folder, id, priority) {
+                this.completed = new ManualResetEvent(false);
+            }
+        }
+
+        //TODO: action tasks (push flags, push spam status, move message, expunge deleted, etc.)
 
         public MailManager(MainWindow window) {
             this.window = window;
             this.sync_log = Logger.WithProperty("source", "SYNC");
             this.user_log = Logger.WithProperty("source", "USER");
+            this.shutdown_event = new ManualResetEvent(false);
             this.client = new ImapClient();
-            this.cache_lock = new object();
-            this.sync_tasks = new List<SyncTask>();
-            this.priority_event = new ManualResetEvent(false);
-            this.last_sync = DateTimeOffset.MinValue;
+            this.folders_lock = new object();
+            this.load_folders();  //TODO: maybe catch MailStoreError and try to repair/delete corrupted cache
+            this.sync_tasks = new LinkedList<SyncTask>();
+            this.last_force_sync = DateTimeOffset.MinValue;
+            this.last_full_sync = DateTimeOffset.MinValue;
             this.token_lock = new object();
             this.shutdown_token = new CancellationTokenSource();
             this.shutdown_token.Token.ThrowIfCancellationRequested();
             this.idle_token = new CancellationTokenSource();
             this.idle_token.Token.ThrowIfCancellationRequested();
-            this.load_cache();
             ToastNotificationManagerCompat.OnActivated += this.activated;
+            this.save_thread = new Thread(this.save_loop);
+            this.save_thread.Start();
             this.sync_thread = new Thread(this.sync_loop);
             this.sync_thread.Start();
+        }
+
+        private void load_folders() {
+            string messagesDir = this.messages_dir;
+            string foldersPath = this.folders_path;
+            BindingList<MailFolder> folders = new BindingList<MailFolder>();
+            if (File.Exists(foldersPath)) {
+                List<MailFolder> folderList;
+                DataContractSerializer serializer = new DataContractSerializer(typeof(List<MailFolder>));
+                try {
+                    using (FileStream f = new FileStream(foldersPath, FileMode.Open)) {
+                        XmlDictionaryReader xmlReader = XmlDictionaryReader.CreateTextReader(f, new XmlDictionaryReaderQuotas());
+                        folderList = (List<MailFolder>)(serializer.ReadObject(xmlReader, true));
+                    }
+                }
+                catch (Exception e) when ((e is IOException) || (e is System.Security.SecurityException) || (e is XmlException)) {
+                    throw new MailLoadError($"Failed to load {foldersPath}: {e.Message}", e);
+                }
+                foreach (MailFolder folder in folderList) {
+                    folder.load_messages(messagesDir);
+                    folders.Add(folder);
+                }
+            }
+            lock (this.folders_lock) {
+                this.folders = folders;
+                this.selected_folder = null;
+                this.selected_message = -1;
+            }
+            BindingOperations.EnableCollectionSynchronization(this.folders, this.folders_lock);
+        }
+
+        private void save_folders() {
+            string messagesDir = this.messages_dir;
+            string foldersPath = this.folders_path;
+            Directory.CreateDirectory(messagesDir);
+            List<MailFolder> folderList;
+            lock (this.folders_lock) {
+                folderList = new List<MailFolder>(this.folders);
+            }
+            DataContractSerializer serializer = new DataContractSerializer(typeof(List<MailFolder>));
+            using (FileStream f = new FileStream(foldersPath, FileMode.Create)) {
+                serializer.WriteObject(f, folderList);
+            }
         }
 
         public void shutdown() {
@@ -123,58 +203,48 @@ namespace Mailzeug {
                 this.shutdown_token.Cancel();
             }
             this.sync_thread.Join();
+            this.shutdown_event.Set();
             this.client.Disconnect(true);
+            this.save_thread.Join();
         }
 
-        private void load_cache() {
-            string messagesDir = Path.Join(this.data_dir, "messages");
-            Directory.CreateDirectory(messagesDir);
-            string foldersPath = Path.Join(messagesDir, "folders.xml");
-            BindingList<MailFolder> folders = new BindingList<MailFolder>();
-            if (File.Exists(foldersPath)) {
-                List<MailFolder> folderList;
-                //TODO: error handling
-                DataContractSerializer serializer = new DataContractSerializer(typeof(List<MailFolder>));
-                using (FileStream f = new FileStream(foldersPath, FileMode.Open)) {
-                    XmlDictionaryReader xmlReader = XmlDictionaryReader.CreateTextReader(f, new XmlDictionaryReaderQuotas());
-                    folderList = (List<MailFolder>)(serializer.ReadObject(xmlReader, true));
+        public void save_loop() {
+            while (this.running) {
+                // save dirty folders which haven't been changed for at least SAVE_INTERVAL (to batch changes together into one save)
+                List<MailFolder> folders = new List<MailFolder>();
+                lock (this.folders_lock) {
+                    foreach (MailFolder folder in this.folders) {
+                        if (folder.dirty) {
+                            folders.Add(folder);
+                        }
+                    }
                 }
-                foreach (MailFolder folder in folderList) {
-                    folder.load_messages(messagesDir);
-                    folders.Add(folder);
+                TimeSpan sleepTime = SAVE_INTERVAL;
+                folders.Sort((x, y) => x.last_changed.CompareTo(y.last_changed));
+                DateTimeOffset curTime = DateTimeOffset.Now;
+                foreach (MailFolder folder in folders) {
+                    DateTimeOffset dueTime = folder.last_changed + SAVE_INTERVAL;
+                    if (dueTime <= curTime) {
+                        // folder is due to be saved; do so
+                        folder.save_messages();
+                    }
+                    else {
+                        // folder isn't due to be saved yet, so we'll sleep until it's due (to a maximum of SAVE_INTERVAL)
+                        TimeSpan folderSleep = dueTime - curTime;
+                        if (folderSleep < sleepTime) {
+                            sleepTime = folderSleep;
+                        }
+                        break;
+                    }
                 }
+                // use shutdown_event to sleep so we'll break early if we're shutting down
+                this.shutdown_event.WaitOne(sleepTime);
             }
-            lock (this.cache_lock) {
-                this.folders = folders;
-                this.selected_folder = null;
-                this.selected_message = -1;
-            }
-            BindingOperations.EnableCollectionSynchronization(this.folders, this.cache_lock);
-        }
-
-        private void save_cache(bool forceAll = false) {
-            string messagesDir = Path.Join(this.data_dir, "messages");
-            Directory.CreateDirectory(messagesDir);
-            List<MailFolder> folderList;
-            lock (this.cache_lock) {
-                folderList = new List<MailFolder>(this.folders);
-            }
-            foreach (MailFolder folder in folderList) {
-                folder.save_messages(messagesDir, forceAll);
-            }
-            this.save_folders(messagesDir, folderList);
-        }
-
-        private void save_folders(string messagesDir, List<MailFolder> folderList = null) {
-            if (folderList is null) {
-                lock (this.cache_lock) {
-                    folderList = new List<MailFolder>(this.folders);
+            // shutting down; make sure every dirty folder is saved
+            lock (this.folders_lock) {
+                foreach (MailFolder folder in this.folders) {
+                    folder.save_messages();
                 }
-            }
-            string foldersPath = Path.Join(messagesDir, "folders.xml");
-            DataContractSerializer serializer = new DataContractSerializer(typeof(List<MailFolder>));
-            using (FileStream f = new FileStream(foldersPath, FileMode.Create)) {
-                serializer.WriteObject(f, folderList);
             }
         }
 
@@ -183,22 +253,21 @@ namespace Mailzeug {
             //TODO: handler for this.client.FolderCreated
             this.connect_client();
             while (this.running) {
-                if (this.priority_task is not null) {
-                    this.handle_sync_task(this.priority_task);
-                    this.priority_task = null;
-                    this.priority_event.Set();
-                    continue;
-                }
                 SyncTask task = null;
-                if (DateTimeOffset.UtcNow >= this.last_sync + FULL_SYNC_INTERVAL) {
-                    task = new FullSyncTask();
-                }
-                else {
-                    lock (this.sync_tasks) {
-                        if (this.sync_tasks.Count > 0) {
-                            task = this.sync_tasks[0];
-                            this.sync_tasks.RemoveAt(0);
+                DateTimeOffset curTime = DateTimeOffset.Now;
+                lock (this.sync_tasks) {
+                    if (this.sync_tasks.First?.Value?.priority != true) {
+                        // if we don't have any high-priority tasks, see if it's time for a full sync
+                        if (curTime >= this.last_force_sync + FORCE_SYNC_INTERVAL) {
+                            task = new FullFetchTask(true);
                         }
+                        else if (curTime >= this.last_full_sync + FULL_SYNC_INTERVAL) {
+                            task = new FullFetchTask();
+                        }
+                    }
+                    if ((task is null) && (this.sync_tasks.First?.Value is not null)) {
+                        task = this.sync_tasks.First.Value;
+                        this.sync_tasks.RemoveFirst();
                     }
                 }
                 if (task is not null) {
@@ -238,6 +307,121 @@ namespace Mailzeug {
             this.client.Authenticate(this.config.username, this.config.password);
         }
 
+        private void handle_sync_task(SyncTask task) {
+            if (task is FullFetchTask fullFetchTask) {
+                this.handle_full_fetch_task(fullFetchTask);
+                if (fullFetchTask.force) {
+                    this.last_force_sync = DateTimeOffset.Now;
+                }
+                else {
+                    this.last_full_sync = DateTimeOffset.Now;
+                }
+                return;
+            }
+            if (task is FolderFetchTask folderFetchTask) {
+                this.handle_folder_fetch_task(folderFetchTask);
+                return;
+            }
+            if (task is MessageStatusFetchTask messageStatusFetchTask) {
+                this.handle_message_status_fetch_task(messageStatusFetchTask);
+                return;
+            }
+            if (task is MessageContentsFetchTask messageContentsFetchTask) {
+                this.handle_message_contents_fetch_task(messageContentsFetchTask);
+                return;
+            }
+            //TODO: action tasks (push flags, push spam status, move message, expunge deleted, etc.)
+        }
+
+        private void handle_full_fetch_task(FullFetchTask task) {
+            this.sync_log.Info("Syncing all folders");
+            List<IMailFolder> folders = new List<IMailFolder>();
+            foreach (FolderNamespace ns in this.client.PersonalNamespaces) {
+                //TODO: error handling
+                try {
+                    folders.AddRange(
+                        this.client.GetFolders(
+                            ns, StatusItems.Count | StatusItems.UidNext | StatusItems.UidValidity, false, this.shutdown_token.Token
+                        )
+                    );
+                }
+                catch (OperationCanceledException) {
+                    this.sync_log.Info("Terminating sync due to shutdown");
+                    return;
+                }
+                lock (this.token_lock) {
+                    this.shutdown_token.Dispose();
+                    this.shutdown_token = new CancellationTokenSource();
+                    this.shutdown_token.Token.ThrowIfCancellationRequested();
+                }
+            }
+            List<MailFolder> deleted = new List<MailFolder>(this.folders);
+            bool dirty = false;
+            string messagesDir = this.messages_dir;
+            lock (this.folders_lock) {
+                foreach (IMailFolder imapFolder in folders) {
+                    int weight = get_weight(imapFolder);
+                    int idx = this.get_insertion_index(imapFolder, weight);
+                    MailFolder mzFolder;
+                    if ((idx < this.folders.Count) && (this.folders[idx].name == imapFolder.FullName)) {
+                        mzFolder = this.folders[idx];
+                        deleted.Remove(mzFolder);
+                    }
+                    else {
+                        this.sync_log.Info("Adding new folder {name}", imapFolder.FullName);
+                        mzFolder = new MailFolder(messagesDir, imapFolder.FullName, weight);
+                        this.folders.Insert(idx, mzFolder);
+                        dirty = true;
+                    }
+                    mzFolder.imap_folder = imapFolder;
+                    //TODO: handlers for imapFolder.CountChanged, .Deleted, .MessageExpunged, .MessageFlagsChanged, .UidValidityChanged
+                    if (
+                        (task.force) ||
+                        (imapFolder.UidValidity != mzFolder.uid_validity) ||
+                        (imapFolder.Count != mzFolder.count) ||
+                        (imapFolder.UidNext.Value.Id != mzFolder.uid_next)
+                    ) {
+                        // folder needs sync
+                        this.sync_log.Info("Scheduling sync of folder {name}", imapFolder.FullName);
+                        if (imapFolder.UidValidity != mzFolder.uid_validity) {
+                            // UID validity differs; invalidate whole folder cache
+                            mzFolder.purge();
+                        }
+                        lock (this.sync_tasks) {
+                            bool needTask = true;
+                            foreach (SyncTask t in this.sync_tasks) {
+                                if ((t is FolderFetchTask folderTask) && (folderTask.folder.name == mzFolder.name)) {
+                                    // there's already a pending sync task for this folder; just reset its offset back to 0
+                                    if (folderTask.offset > 0) {
+                                        folderTask.offset = 0;
+                                    }
+                                    needTask = false;
+                                    break;
+                                }
+                            }
+                            if (needTask) {
+                                // no pending sync task on this folder; add one
+                                this.sync_tasks.AddLast(new FolderFetchTask(mzFolder));
+                            }
+                        }
+                        mzFolder.uid_validity = imapFolder.UidValidity;
+                        mzFolder.uid_next = imapFolder.UidNext.Value.Id;
+                        dirty = true;
+                    }
+                }
+                foreach (MailFolder folder in deleted) {
+                    this.sync_log.Info("Deleting folder {name}", folder.name);
+                    this.delete_folder(folder);
+                    dirty = true;
+                }
+            }
+            if (dirty) {
+                this.save_folders();
+                this.window.fix_folder_list_column_sizes();
+            }
+            this.sync_log.Info("Done syncing all folders");
+        }
+
         private static int get_weight(IMailFolder folder) {
             int weight = WEIGHT_NONE;
             if ((weight < WEIGHT_INBOX) && (folder.Attributes.HasFlag(FolderAttributes.Inbox))) {
@@ -271,7 +455,7 @@ namespace Mailzeug {
         }
 
         private int get_insertion_index(IMailFolder folder, int weight) {
-            // this function assumes caller holds cache_lock
+            // this function assumes caller holds folders_lock
             int insertIdx = this.folders.Count;
             for (int i = 0; i < this.folders.Count; i++) {
                 if (this.folders[i].name == folder.FullName) {
@@ -287,218 +471,39 @@ namespace Mailzeug {
             return insertIdx;
         }
 
-        private void handle_sync_task(SyncTask task) {
-            if (task is FullSyncTask fullSyncTask) {
-                if (fullSyncTask.imap_folder is null) {
-                    // full sync of all folders
-                    this.sync_folders();
-                }
-                else {
-                    // full sync of single folder (e.g. new folder was created)
-                    //TODO: handle full sync of single folder
-                }
-                this.last_sync = DateTimeOffset.UtcNow;
-                return;
+        private void handle_folder_fetch_task(FolderFetchTask task) {
+            MailFolder mzFolder = task.folder;
+            IMailFolder imapFolder = mzFolder.imap_folder;
+            this.sync_log.Info("Syncing messages in {name}: {offset} / {count}", mzFolder.name, task.offset, imapFolder.Count);
+            if (task.unseen_ids is null) {
+                task.unseen_ids = new HashSet<uint>(mzFolder.message_ids);
             }
-            if (task is FolderContentsSyncTask folderContentsSyncTask) {
-                this.sync_messages(folderContentsSyncTask);
-                return;
-            }
-            if (task is MessageDownloadTask messageDownloadTask) {
-                this.sync_message_body(messageDownloadTask);
-                return;
-            }
-        }
-
-        private void sync_folders() {
-            this.sync_log.Info("Syncing all folders");
-            List<IMailFolder> folders = new List<IMailFolder>();
-            foreach (FolderNamespace ns in this.client.PersonalNamespaces) {
-                //TODO: error handling
-                try {
-                    folders.AddRange(
-                        this.client.GetFolders(
-                            ns, StatusItems.Count | StatusItems.UidNext | StatusItems.UidValidity, false, this.shutdown_token.Token
-                        )
-                    );
-                }
-                catch (OperationCanceledException) {
-                    this.sync_log.Info("Terminating sync due to shutdown");
-                    return;
-                }
-                lock (this.token_lock) {
-                    this.shutdown_token.Dispose();
-                    this.shutdown_token = new CancellationTokenSource();
-                    this.shutdown_token.Token.ThrowIfCancellationRequested();
-                }
-            }
-            List<MailFolder> deleted = new List<MailFolder>(this.folders);
-            bool dirty = false;
-            string messagesDir = Path.Join(this.data_dir, "messages");
-            lock (this.cache_lock) {
-                foreach (IMailFolder imapFolder in folders) {
-                    int weight = get_weight(imapFolder);
-                    int idx = this.get_insertion_index(imapFolder, weight);
-                    MailFolder mzFolder;
-                    if ((idx < this.folders.Count) && (this.folders[idx].name == imapFolder.FullName)) {
-                        mzFolder = this.folders[idx];
-                        deleted.Remove(mzFolder);
-                    }
-                    else {
-                        this.sync_log.Info("Adding new folder {name}", imapFolder.FullName);
-                        mzFolder = new MailFolder(imapFolder.FullName, weight);
-                        this.folders.Insert(idx, mzFolder);
-                        dirty = true;
-                    }
-                    mzFolder.imap_folder = imapFolder;
-                    //TODO: handlers for imapFolder.CountChanged, .Deleted, .MessageExpunged, .MessageFlagsChanged, .UidValidityChanged
-                    if (
-                        (imapFolder.UidValidity != mzFolder.uid_validity) ||
-                        (imapFolder.Count != mzFolder.messages.Count) ||
-                        (imapFolder.UidNext.Value.Id != mzFolder.uid_next)
-                    ) {
-                        // folder needs sync
-                        this.sync_log.Info("Scheduling sync of folder {name}", imapFolder.FullName);
-                        if (imapFolder.UidValidity != mzFolder.uid_validity) {
-                            // UID validity differs; invalidate whole folder cache
-                            mzFolder.purge(messagesDir);
-                        }
-                        FolderContentsSyncTask task = new FolderContentsSyncTask(mzFolder, imapFolder);
-                        bool needTask = true;
-                        lock (this.sync_tasks) {
-                            for (int i = 0; i < this.sync_tasks.Count; i++) {
-                                if ((this.sync_tasks[i] is FolderContentsSyncTask folderTask) && (folderTask.mz_folder.name == mzFolder.name)) {
-                                    // already a pending sync task on this folder; replace it with a new task
-                                    this.sync_tasks[i] = task;
-                                    needTask = false;
-                                    break;
-                                }
-                            }
-                            if (needTask) {
-                                // no pending sync task on this folder; add a new one
-                                this.sync_tasks.Add(task);
-                            }
-                        }
-                        mzFolder.uid_validity = imapFolder.UidValidity;
-                        mzFolder.uid_next = imapFolder.UidNext.Value.Id;
-                        dirty = true;
-                    }
-                }
-                foreach (MailFolder folder in deleted) {
-                    this.sync_log.Info("Deleting folder {name}", folder.name);
-                    this.delete_folder(messagesDir, folder);
-                    dirty = true;
-                }
-            }
-            if (dirty) {
-                this.save_cache();
-                this.window.fix_folder_list_column_sizes();
-            }
-            this.sync_log.Info("Done syncing all folders");
-        }
-
-        private void sync_messages(FolderContentsSyncTask task) {
-            if (task.offset < task.mz_folder.messages.Count) {
-                sync_cached_messages(task);
-            }
-            else {
-                sync_new_messages(task);
-            }
-            string messagesDir = Path.Join(this.data_dir, "messages");
-            bool shardsChanged;
-            lock (this.cache_lock) {
-                shardsChanged = task.mz_folder.save_messages(messagesDir);
-            }
-            if (shardsChanged) {
-                this.save_folders(messagesDir);
-            }
-        }
-
-        private void sync_cached_messages(FolderContentsSyncTask task) {
-            MailFolder mzFolder = task.mz_folder;
-            this.sync_log.Info("Syncing old messages in {name}, {offset} / {count}", mzFolder.name, task.offset, mzFolder.messages.Count);
-            List<MailKit.UniqueId> uids = new List<MailKit.UniqueId>(SYNC_BATCH_SIZE);
-            HashSet<uint> unseen = new HashSet<uint>();
-            lock (this.cache_lock) {
-                for (int i = 0; i < SYNC_BATCH_SIZE; i++) {
-                    int mzIdx = task.offset + i;
-                    if (mzIdx >= mzFolder.messages.Count) {
-                        break;
-                    }
-                    uint uid = mzFolder.messages[mzIdx].id;
-                    uids.Add(new MailKit.UniqueId(uid));
-                    unseen.Add(uid);
-                }
-            }
-            FetchRequest req = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Flags);
-            task.imap_folder.Open(FolderAccess.ReadOnly);
-            //TODO: error handling
-            IList<IMessageSummary> summaries;
-            try {
-                summaries = task.imap_folder.Fetch(uids, req, this.shutdown_token.Token);
-            }
-            catch (OperationCanceledException) {
-                this.sync_log.Info("Terminating sync due to shutdown");
-                return;
-            }
-            task.imap_folder.Close();
-            lock (this.token_lock) {
-                this.shutdown_token.Dispose();
-                this.shutdown_token = new CancellationTokenSource();
-                this.shutdown_token.Token.ThrowIfCancellationRequested();
-            }
-            int msgCount = 0;
-            lock (this.cache_lock) {
-                foreach (IMessageSummary sum in summaries) {
-                    uint uid = sum.UniqueId.Id;
-                    unseen.Remove(sum.UniqueId.Id);
-                    if (!mzFolder.messages_by_id.ContainsKey(uid)) {
-                        continue;
-                    }
-                    if ((sum.Flags & MessageFlags.Deleted) != 0) {
-                        mzFolder.remove_message(uid);
-                        continue;
-                    }
-                    MailMessage msg = mzFolder.messages_by_id[uid];
-                    msgCount += 1;
-                    mzFolder.set_read(uid, (sum.Flags & MessageFlags.Seen) != 0);
-                    mzFolder.set_replied(uid, (sum.Flags & MessageFlags.Answered) != 0);
-                }
-                foreach (uint uid in unseen) {
-                    mzFolder.remove_message(uid);
-                }
-            }
-            lock (this.sync_tasks) {
-                this.sync_tasks.Add(new FolderContentsSyncTask(task.mz_folder, task.imap_folder, task.offset + msgCount));
-            }
-            this.window.fix_folder_list_column_sizes();
-            this.sync_log.Info("Synced {count} old messages in {name}", msgCount, mzFolder.name);
-        }
-
-        private void sync_new_messages(FolderContentsSyncTask task) {
-            this.sync_log.Info("Syncing new messages in {name}, {offset} / {count}", task.mz_folder.name, task.offset, task.imap_folder.Count);
-            //TODO: notify new unread messages
             int startIdx = task.offset;
-            if (startIdx >= task.imap_folder.Count) {
+            if (startIdx >= imapFolder.Count) {
+                this.finalize_folder_fetch_task(task);
                 this.sync_log.Info("No more new messages to sync");
                 return;
             }
             int endIdx = startIdx + SYNC_BATCH_SIZE;
-            if (endIdx >= task.imap_folder.Count) {
+            if (endIdx >= imapFolder.Count) {
                 endIdx = -1;
             }
             FetchRequest req = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Flags | MessageSummaryItems.Envelope);
-            task.imap_folder.Open(FolderAccess.ReadOnly);
-            //TODO: error handling
             IList<IMessageSummary> summaries;
+            //TODO: error handling
+            imapFolder.Open(FolderAccess.ReadOnly);
             try {
-                summaries = task.imap_folder.Fetch(startIdx, endIdx, req, this.shutdown_token.Token);
+                summaries = imapFolder.Fetch(startIdx, endIdx, req, this.shutdown_token.Token);
             }
             catch (OperationCanceledException) {
                 this.sync_log.Info("Terminating sync due to shutdown");
                 return;
             }
-            task.imap_folder.Close();
+            finally {
+                if (this.running) {
+                    imapFolder.Close();
+                }
+            }
             lock (this.token_lock) {
                 this.shutdown_token.Dispose();
                 this.shutdown_token = new CancellationTokenSource();
@@ -506,85 +511,144 @@ namespace Mailzeug {
             }
             DateTimeOffset minNotify = DateTimeOffset.Now - NOTIFY_MAX_AGE;
             List<MailMessage> notifyMessages = new List<MailMessage>();
-            lock (this.cache_lock) {
-                foreach (IMessageSummary sum in summaries) {
-                    if ((sum.Flags & MessageFlags.Deleted) != 0) {
-                        continue;
+            foreach (IMessageSummary sum in summaries) {
+                task.unseen_ids.Remove(sum.UniqueId.Id);
+                MailMessage msg = mzFolder.add_message(sum);
+                if (msg is not null) {
+                    if (msg.id == mzFolder.uid_next) {
+                        // predict next uid after this one was assigned; this should avoid unnecessary syncs
+                        mzFolder.uid_next += 1;
                     }
-                    MailMessage msg = new MailMessage(sum);
-                    bool msgNew = task.mz_folder.add_message(msg);
-                    //TODO: select which folders to notify
-                    if ((msgNew) && (msg.unread) && (msg.timestamp >= minNotify) && (task.imap_folder.Attributes.HasFlag(FolderAttributes.Inbox))) {
+                    if ((msg.unread) && (msg.timestamp >= minNotify) && (imapFolder.Attributes.HasFlag(FolderAttributes.Inbox))) {
                         notifyMessages.Add(msg);
                     }
                 }
             }
             this.window.fix_folder_list_column_sizes();
             foreach (MailMessage msg in notifyMessages) {
-                this.notify_message(task.mz_folder, msg);
+                this.notify_message(mzFolder, msg);
             }
             if ((endIdx < 0) || (summaries.Count <= 0)) {
-                this.sync_log.Info("Synced all new messages in {name}", task.mz_folder.name);
+                this.sync_log.Info("Synced all new messages in {name}", mzFolder.name);
+                this.finalize_folder_fetch_task(task);
                 return;
             }
+            task.offset += summaries.Count;
             lock (this.sync_tasks) {
-                this.sync_tasks.Add(new FolderContentsSyncTask(task.mz_folder, task.imap_folder, task.offset + summaries.Count));
+                //TODO: put this after priority tasks
+                this.sync_tasks.AddFirst(task);
             }
-            this.sync_log.Info("Synced {count} new messages in {name}", summaries.Count, task.mz_folder.name);
+            this.sync_log.Info("Synced {count} new messages in {name}", summaries.Count, mzFolder.name);
         }
 
-        private void sync_message_body(MessageDownloadTask task) {
-            MailMessage msg;
-            lock (this.cache_lock) {
-                if (!task.mz_folder.messages_by_id.ContainsKey(task.id)) {
-                    this.sync_log.Debug("Message {uid} no longer present in {name}", task.id, task.mz_folder.name);
-                    return;
-                }
-                msg = task.mz_folder.messages_by_id[task.id];
-                if (task.mz_folder.messages_by_id[task.id].loaded) {
-                    this.sync_log.Debug("Message {uid} in {name} already downloaded", task.id, task.mz_folder.name);
-                    return;
-                }
+        private void finalize_folder_fetch_task(FolderFetchTask task) {
+            // remove messages which weren't seen during the sync
+            foreach (uint uid in task.unseen_ids) {
+                task.folder.remove_message(uid);
             }
-            this.sync_log.Info("Downloading message {uid} body in {name}", task.id, task.mz_folder.name);
-            task.imap_folder.Open(FolderAccess.ReadOnly);
-            MimeMessage imapMsg;
+        }
+
+        private void handle_message_status_fetch_task(MessageStatusFetchTask task) {
+            MailFolder mzFolder = task.folder;
+            IMailFolder imapFolder = mzFolder.imap_folder;
+            this.sync_log.Info("Syncing message {uid} in {name}", task.id, mzFolder.name);
+            List<MailKit.UniqueId> uids = new List<MailKit.UniqueId>(1);
+            uids.Add(new MailKit.UniqueId(task.id));
+            FetchRequest req = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Flags);
+            IList<IMessageSummary> summaries;
+            //TODO: error handling
+            imapFolder.Open(FolderAccess.ReadOnly);
             try {
-                //TODO: error handling
-                imapMsg = task.imap_folder.GetMessage(new MailKit.UniqueId(task.id), this.shutdown_token.Token);
+                summaries = imapFolder.Fetch(uids, req, this.shutdown_token.Token);
             }
             catch (OperationCanceledException) {
-                this.sync_log.Info("Terminating download due to shutdown");
+                this.sync_log.Info("Terminating sync due to shutdown");
                 return;
             }
-            task.imap_folder.Close();
+            finally {
+                if (this.running) {
+                    imapFolder.Close();
+                }
+            }
             lock (this.token_lock) {
                 this.shutdown_token.Dispose();
                 this.shutdown_token = new CancellationTokenSource();
                 this.shutdown_token.Token.ThrowIfCancellationRequested();
             }
-            task.mz_folder.load_message(task.id, imapMsg);
-            string messagesDir = Path.Join(this.data_dir, "messages");
-            bool shardsChanged;
-            lock (this.cache_lock) {
-                shardsChanged = task.mz_folder.save_messages(messagesDir);
-            }
-            if (shardsChanged) {
-                this.save_folders(messagesDir);
-            }
-            this.sync_log.Info("Downloaded message {uid} body in {name}", task.id, task.mz_folder.name);
-        }
-
-        private void delete_folder(string messagesDir, MailFolder folder) {
-            // delete any pending sync tasks on this folder
-            lock (this.sync_tasks) {
-                for (int i = this.sync_tasks.Count - 1; i >= 0; i--) {
-                    if ((this.sync_tasks[i] is FolderSyncTask folderTask) && (folderTask.mz_folder.name == folder.name)) {
-                        this.sync_tasks.RemoveAt(i);
+            bool seen = false;
+            DateTimeOffset minNotify = DateTimeOffset.Now - NOTIFY_MAX_AGE;
+            MailMessage notifyMsg = null; ;
+            foreach (IMessageSummary sum in summaries) {
+                uint uid = sum.UniqueId.Id;
+                if (uid != task.id) {
+                    continue;
+                }
+                MailMessage msg = mzFolder.add_message(sum);
+                if (msg is not null) {
+                    if (msg.id == mzFolder.uid_next) {
+                        // predict next uid after this one was assigned; this should avoid unnecessary syncs
+                        mzFolder.uid_next += 1;
+                    }
+                    if ((msg.unread) && (msg.timestamp >= minNotify) && (imapFolder.Attributes.HasFlag(FolderAttributes.Inbox))) {
+                        notifyMsg = msg;
                     }
                 }
+                seen = true;
+                break;
             }
-            folder.delete(messagesDir);
+            if (!seen) {
+                mzFolder.remove_message(task.id);
+            }
+            if (notifyMsg is not null) {
+                this.notify_message(mzFolder, notifyMsg);
+            }
+            this.window.fix_folder_list_column_sizes();
+            this.sync_log.Info("Synced message {uid} in {name}", task.id, mzFolder.name);
+        }
+
+        private void handle_message_contents_fetch_task(MessageContentsFetchTask task) {
+            MailFolder mzFolder = task.folder;
+            IMailFolder imapFolder = mzFolder.imap_folder;
+            this.sync_log.Info("Downloading message {uid} body in {name}", task.id, mzFolder.name);
+            MimeMessage imapMsg;
+            //TODO: error handling
+            imapFolder.Open(FolderAccess.ReadOnly);
+            try {
+                imapMsg = imapFolder.GetMessage(new MailKit.UniqueId(task.id), this.shutdown_token.Token);
+            }
+            catch (OperationCanceledException) {
+                this.sync_log.Info("Terminating download due to shutdown");
+                return;
+            }
+            finally {
+                if (this.running) {
+                    imapFolder.Close();
+                }
+            }
+            lock (this.token_lock) {
+                this.shutdown_token.Dispose();
+                this.shutdown_token = new CancellationTokenSource();
+                this.shutdown_token.Token.ThrowIfCancellationRequested();
+            }
+            mzFolder.load_message(task.id, imapMsg);
+            task.completed.Set();
+            this.sync_log.Info("Downloaded message {uid} body in {name}", task.id, mzFolder.name);
+        }
+
+        //TODO: handlers for action tasks (push flags, push spam status, move message, expunge deleted, etc.)
+
+        private void delete_folder(MailFolder folder) {
+            // delete any pending sync tasks on this folder
+            lock (this.sync_tasks) {
+                LinkedListNode<SyncTask> taskNode = this.sync_tasks.First;
+                while (taskNode is not null) {
+                    if ((taskNode.Value is FolderSyncTask folderTask) && (folderTask.folder == folder)) {
+                        this.sync_tasks.Remove(taskNode);
+                    }
+                    taskNode = taskNode.Next;
+                }
+            }
+            folder.remove();
             if (this.selected_folder == folder) {
                 this.select_folder(null);
             }
@@ -593,7 +657,7 @@ namespace Mailzeug {
 
         private void notify_message(MailFolder folder, MailMessage msg) {
             ToastArguments args = new ToastArguments().Add(NOTIFY_ARG_FOLDER, folder.name).Add(NOTIFY_ARG_MESSAGE, (int)(msg.id));
-            ToastContentBuilder toast = new ToastContentBuilder().AddText(msg.subject).AddText(msg.from);
+            ToastContentBuilder toast = new ToastContentBuilder().AddText(msg.from).AddText(msg.subject);
             // add args to toast before adding delete arg
             foreach (KeyValuePair<string, string> arg in args) {
                 toast = toast.AddArgument(arg.Key, arg.Value);
@@ -610,43 +674,46 @@ namespace Mailzeug {
                 return;
             }
             this.selected_folder = sel;
-            if (sel is not null) {
-                BindingOperations.EnableCollectionSynchronization(sel.messages, this.cache_lock);
-            }
-            this.window.message_list.ItemsSource = sel?.messages;
+            this.window.message_list.ItemsSource = sel?.message_display;
         }
 
         async public void select_message(int idx) {
             if (idx == this.selected_message) {
                 return;
             }
+            MailFolder oldSelFolder = this.selected_folder;
+            int oldSelMsg = this.selected_message;
             MailMessage sel = null;
-            if ((this.selected_folder is not null) && (idx >= 0) && (idx < this.selected_folder.messages.Count)) {
-                sel = this.selected_folder.messages[idx];
+            if ((this.selected_folder is not null) && (idx >= 0) && (idx < this.selected_folder.message_display.Count)) {
+                sel = this.selected_folder.message_display[idx];
             }
             if ((sel is not null) && (!sel.loaded) && (this.client.IsConnected)) {
                 this.user_log.Info("Downloading message {uid} in {folder}", sel.id, this.selected_folder.name);
-                //TODO: make sure we only have one priority event in flight at a time (async means they could pile up)
-                this.priority_event.Reset();
-                this.priority_task = new MessageDownloadTask(this.selected_folder, this.selected_folder.imap_folder, sel.id);
+                MessageContentsFetchTask downloadTask = new MessageContentsFetchTask(this.selected_folder, sel.id, true);
+                lock (this.sync_tasks) {
+                    this.sync_tasks.AddFirst(downloadTask);
+                }
                 lock (this.token_lock) {
                     this.idle_token.Cancel();
                 }
                 // do this async so we don't block events in main thread; otherwise sync thread and main thread may block on each other
-                await System.Threading.Tasks.Task.Run(() => this.priority_event.WaitOne());
+                await System.Threading.Tasks.Task.Run(() => downloadTask.completed.WaitOne());
                 lock (this.token_lock) {
                     this.idle_token.Dispose();
                     this.idle_token = new CancellationTokenSource();
                     this.idle_token.Token.ThrowIfCancellationRequested();
                 }
             }
-            this.window.message_ctrl.show_message(sel, false);
+            // make sure selection hasn't changed before we show the downloaded message
+            if ((this.selected_folder == oldSelFolder) && (this.selected_message == oldSelMsg)) {
+                this.window.message_ctrl.show_message(sel, false);
+            }
         }
 
         public void select_message(string folder, uint id) {
             MailFolder selFolder = null;
             int msgIdx = -1;
-            lock (this.cache_lock) {
+            lock (this.folders_lock) {
                 foreach (MailFolder fld in this.folders) {
                     if (fld.name == folder) {
                         selFolder = fld;
@@ -656,8 +723,8 @@ namespace Mailzeug {
                 if (selFolder is null) {
                     return;
                 }
-                for (int i = 0; i < selFolder.messages.Count; i++) {
-                    if (selFolder.messages[i].id == id) {
+                for (int i = 0; i < selFolder.message_display.Count; i++) {
+                    if (selFolder.message_display[i].id == id) {
                         msgIdx = i;
                         break;
                     }
