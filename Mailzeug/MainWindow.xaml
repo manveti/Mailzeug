@@ -45,7 +45,7 @@
             </Grid.RowDefinitions>
 
             <!--Top List: Folders-->
-            <ListView Grid.Row="0" Grid.Column="0" Name="folder_list" SelectedValuePath="self" SelectionChanged="folder_list_sel_changed">
+            <ListView Grid.Row="0" Grid.Column="0" Name="folder_list" SelectionChanged="folder_list_sel_changed">
                 <ListView.Resources>
                     <Style TargetType="GridViewColumnHeader">
                         <Setter Property="Template" Value="{x:Null}"/>

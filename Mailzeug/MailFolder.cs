@@ -1,17 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
-using System.Runtime.Serialization;
-using System.Xml;
 
 using MailKit;
-using MimeKit;
 
 namespace Mailzeug {
     [Serializable]
     public class MailFolder : INotifyPropertyChanged {
+        [NonSerialized]
+        protected string messages_dir;
         protected string _name;
         [NonSerialized]
         protected MailStore store;
@@ -24,10 +22,13 @@ namespace Mailzeug {
         [field: NonSerialized]
         public event PropertyChangedEventHandler PropertyChanged;
 
+        protected string folder_path => Path.Join(this.messages_dir, this._name);
+
         public string name {
             get { return this._name; }
             set {
                 this._name = value;
+                this.store.move(this.folder_path);
                 this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.name)));
             }
         }
@@ -50,21 +51,19 @@ namespace Mailzeug {
         }
 
         public MailFolder(string messagesDir, string name, int weight = 0) {
+            this.messages_dir = messagesDir;
             this._name = name;
-            this.store = new MailStore(this.folderPath(messagesDir));
+            this.store = new MailStore(this.folder_path);
             this.weight = weight;
             this.uid_validity = 0;
             this.uid_next = 0;
             this.imap_folder = null;
         }
 
-        protected string folderPath(string messagesDir) {
-            return Path.Join(messagesDir, this._name);
-        }
-
         public void load_messages(string messagesDir) {
             // this must be called immediately after deserialization
-            this.store = new MailStore(this.folderPath(messagesDir));
+            this.messages_dir = messagesDir;
+            this.store = new MailStore(this.folder_path);
             this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
         }
 
@@ -73,7 +72,8 @@ namespace Mailzeug {
         }
 
         public void move(string messagesDir) {
-            this.store.move(this.folderPath(messagesDir));
+            this.messages_dir = messagesDir;
+            this.store.move(this.folder_path);
         }
 
         public void remove() {
