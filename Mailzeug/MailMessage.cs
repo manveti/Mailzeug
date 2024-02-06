@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.IO;
 
 using MailKit;
@@ -6,7 +7,7 @@ using MimeKit;
 
 namespace Mailzeug {
     [Serializable]
-    public class MailMessage {
+    public class MailMessage : INotifyPropertyChanged {
         public readonly uint id;
         protected string _subject;
         public DateTimeOffset timestamp;
@@ -15,6 +16,9 @@ namespace Mailzeug {
         public bool read;
         protected bool _replied;
         public bool deleted;
+
+        [field: NonSerialized]
+        public event PropertyChangedEventHandler PropertyChanged;
 
         public string subject => this._subject;
         public string timestamp_string => this.timestamp.ToLocalTime().ToString("G");
@@ -39,24 +43,29 @@ namespace Mailzeug {
             if (summary.Envelope.Subject != this._subject) {
                 this._subject = summary.Envelope.Subject;
                 dirty = true;
+                this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.subject)));
             }
             if (summary.Date != this.timestamp) {
                 this.timestamp = summary.Date;
+                this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.timestamp_string)));
                 dirty = true;
             }
             string from = summary.Envelope.From.ToString();
             if (from != this._from) {
                 this._from = from;
+                this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.from)));
                 dirty = true;
             }
             bool read = (summary.Flags & MessageFlags.Seen) != 0;
             if (read != this.read) {
                 this.read = read;
+                this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.unread)));
                 dirty = true;
             }
             bool replied = (summary.Flags & MessageFlags.Answered) != 0;
             if (replied != this._replied) {
                 this._replied = replied;
+                this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.replied)));
                 dirty = true;
             }
             bool deleted = (summary.Flags & MessageFlags.Deleted) != 0;

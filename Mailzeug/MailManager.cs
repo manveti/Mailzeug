@@ -640,7 +640,7 @@ namespace Mailzeug {
             foreach (uint uid in task.ids) {
                 uids.Add(new MailKit.UniqueId(uid));
             }
-            FetchRequest req = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Flags);
+            FetchRequest req = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Flags | MessageSummaryItems.Envelope);
             IList<IMessageSummary> summaries;
             //TODO: error handling
             imapFolder.Open(FolderAccess.ReadOnly);
@@ -780,6 +780,7 @@ namespace Mailzeug {
             lock (this.sync_tasks) {
                 this.sync_tasks.AddLast(new AddedFolderFetchTask(args.Folder));
             }
+            this.cancel_idle_mode();
         }
 
         private void handle_folder_deleted_event(MailFolder folder) {
@@ -816,6 +817,7 @@ namespace Mailzeug {
                 // add purge task
                 this.sync_tasks.AddLast(new FolderPurgeTask(folder));
             }
+            this.cancel_idle_mode();
         }
 
         private void handle_count_changed_event(MailFolder folder) {
@@ -831,6 +833,7 @@ namespace Mailzeug {
                 // no fetch task in progress; add a new one for any messages past those we already have
                 this.sync_tasks.AddLast(new FolderFetchTask(folder, folder.count) { unseen_ids = new HashSet<uint>() });
             }
+            this.cancel_idle_mode();
         }
 
         private void handle_message_expunged_event(MailFolder folder, MessageEventArgs args) {
@@ -851,8 +854,8 @@ namespace Mailzeug {
             if (maxIdx > ids.Count) {
                 maxIdx = ids.Count;
             }
+            bool newTask = false;
             lock (this.sync_tasks) {
-                bool newTask = false;
                 MessageStatusFetchTask task = null;
                 // see if there's an existing task to extend
                 foreach (SyncTask t in this.sync_tasks) {
@@ -872,6 +875,9 @@ namespace Mailzeug {
                 if (newTask) {
                     this.sync_tasks.AddLast(task);
                 }
+            }
+            if (newTask) {
+                this.cancel_idle_mode();
             }
         }
 
@@ -905,20 +911,22 @@ namespace Mailzeug {
                 lock (this.sync_tasks) {
                     this.sync_tasks.AddFirst(downloadTask);
                 }
-                lock (this.token_lock) {
-                    this.idle_token.Cancel();
-                }
+                this.cancel_idle_mode();
                 // do this async so we don't block events in main thread; otherwise sync thread and main thread may block on each other
                 await System.Threading.Tasks.Task.Run(() => downloadTask.completed.WaitOne());
-                lock (this.token_lock) {
-                    this.idle_token.Dispose();
-                    this.idle_token = new CancellationTokenSource();
-                    this.idle_token.Token.ThrowIfCancellationRequested();
-                }
             }
             // make sure selection hasn't changed before we show the downloaded message
             if ((this.selected_folder == oldSelFolder) && (this.selected_message == oldSelMsg)) {
                 this.window.message_ctrl.show_message(sel, false);
+            }
+        }
+
+        public void cancel_idle_mode() {
+            lock (this.token_lock) {
+                this.idle_token.Cancel();
+                this.idle_token.Dispose();
+                this.idle_token = new CancellationTokenSource();
+                this.idle_token.Token.ThrowIfCancellationRequested();
             }
         }
 
