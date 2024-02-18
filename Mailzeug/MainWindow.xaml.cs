@@ -11,10 +11,21 @@ using System.Windows.Forms;
 using NLog;
 
 namespace Mailzeug {
+    public interface IMessageWindow {
+        public abstract void handle_new_message();
+        public abstract void handle_reply(MailFolder folder, MailMessage message);
+        public abstract void handle_reply_all(MailFolder folder, MailMessage message);
+        public abstract void handle_forward(MailFolder folder, MailMessage message);
+        public abstract void handle_mark_spam(MailFolder folder, MailMessage message, bool isSpam);
+        public abstract void handle_mark_read(MailFolder folder, MailMessage message, bool isRead);
+        public abstract void handle_move(MailFolder folder, MailMessage message);
+        public abstract void handle_delete(MailFolder folder, MailMessage message);
+    }
+
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// </summary>
-    public partial class MainWindow : Window {
+    public partial class MainWindow : Window, IMessageWindow {
         private readonly NotifyIcon notify_icon;
         private bool shutdown = false;
         public Config config;
@@ -125,6 +136,42 @@ namespace Mailzeug {
 
         private void message_list_sel_changed(object sender, RoutedEventArgs e) {
             this.mail_manager.select_message(this.message_list.SelectedIndex);
+        }
+
+        private void message_list_delete(object sender, RoutedEventArgs e) {
+            MailMessage message = ((FrameworkElement)sender).DataContext as MailMessage;
+            this.handle_delete(this.mail_manager.selected_folder, message);
+        }
+
+        public void handle_new_message() {
+            //TODO: new message window
+        }
+
+        public void handle_reply(MailFolder folder, MailMessage message) {
+            //TODO: new message window with reply association; mark message replied if reply sent
+        }
+
+        public void handle_reply_all(MailFolder folder, MailMessage message) {
+            //TODO: new message window with reply association; mark message replied if reply sent
+        }
+
+        public void handle_forward(MailFolder folder, MailMessage message) {
+            //TODO: new message window with forward association
+        }
+
+        public void handle_mark_spam(MailFolder folder, MailMessage message, bool isSpam) {
+            //TODO: outlook doesn't have spam flag, so just move to/from junk folder
+        }
+
+        public void handle_mark_read(MailFolder folder, MailMessage message, bool isRead) {
+            //TODO: push new flag action
+        }
+
+        public void handle_move(MailFolder folder, MailMessage message) {
+            //TODO: prompt for destination folder; move if destination selected and different from current folder
+        }
+        public void handle_delete(MailFolder folder, MailMessage message) {
+            //TODO: if folder is trash/junk, delete; else, move to trash
         }
     }
 

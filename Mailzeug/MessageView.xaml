@@ -20,21 +20,38 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+        
+        <!-- action buttons -->
+        <StackPanel Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="4" Orientation="Horizontal" x:Name="toolbar">
+            <Button Margin="1" Content="New Message..." Click="do_new_message"/>
+            <Rectangle VerticalAlignment="Stretch" Width="1" Margin="3" Stroke="Black"/>
+            <Button Margin="1" Content="Reply..." Name="reply_but" IsEnabled="False" Click="do_reply"/>
+            <Button Margin="1" Content="Reply All..." Name="reply_all_but" IsEnabled="False" Click="do_reply_all"/>
+            <Button Margin="1" Content="Forward..." Name="forward_but" IsEnabled="False" Click="do_forward"/>
+            <Rectangle VerticalAlignment="Stretch" Width="1" Margin="3" Stroke="Black"/>
+            <Button Margin="1" Content="Mark as Spam" Name="spam_but" IsEnabled="False" Click="do_mark_spam"/>
+            <Button Margin="1" Content="Mark as Read" Name="read_but" IsEnabled="False" Click="do_mark_read"/>
+            <Rectangle VerticalAlignment="Stretch" Width="1" Margin="3" Stroke="Black"/>
+            <Button Margin="1" Content="Move..." Name="move_but" IsEnabled="False" Click="do_move"/>
+            <Rectangle VerticalAlignment="Stretch" Width="1" Margin="3" Stroke="Black"/>
+            <Button Margin="1" Content="Delete" Name="delete_but" IsEnabled="False" Click="do_delete"/>
+        </StackPanel>
 
-        <Label Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="4" Name="subject_box"/>
-        <Label Grid.Row="1" Grid.Column="0" Content="From:"/>
-        <Label Grid.Row="1" Grid.Column="1" Name="from_box"/>
-        <Label Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Name="timestamp_box"/>
-        <Label Grid.Row="2" Grid.Column="0" Content="To:"/>
-        <Label Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Name="to_box"/>
-        <Label Grid.Row="3" Grid.Column="0" Content="CC:"/>
-        <Label Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Name="cc_box"/>
-        <Label Grid.Row="4" Grid.Column="0" Content="BCC:"/>
-        <Label Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Name="bcc_box"/>
-        <Button Grid.Row="4" Grid.Column="3" Name="download_but" Content="Load Images" IsEnabled="False" Click="download_images"/>
+        <Label Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="4" Name="subject_box"/>
+        <Label Grid.Row="2" Grid.Column="0" Content="From:"/>
+        <Label Grid.Row="2" Grid.Column="1" Name="from_box"/>
+        <Label Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2" Name="timestamp_box"/>
+        <Label Grid.Row="3" Grid.Column="0" Content="To:"/>
+        <Label Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Name="to_box"/>
+        <Label Grid.Row="4" Grid.Column="0" Content="CC:"/>
+        <Label Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Name="cc_box"/>
+        <Label Grid.Row="5" Grid.Column="0" Content="BCC:"/>
+        <Label Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Name="bcc_box"/>
+        <Button Grid.Row="5" Grid.Column="3" Name="download_but" Content="Load Images" IsEnabled="False" Click="download_images"/>
         <!--maybe full including sender, reply to, message id, and in reply to-->
-        <wv2:WebView2 Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Name="body_box"/>
+        <wv2:WebView2 Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="4" Name="body_box"/>
     </Grid>
 </UserControl>

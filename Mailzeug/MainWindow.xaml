@@ -87,8 +87,20 @@
                             <TextBlock Grid.Row="0" Grid.Column="0" Margin="2" Text="{Binding from, Mode=OneWay}"
                                        FontWeight="{Binding unread, Converter={StaticResource FontWeightConverter}}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Margin="2" Text="{Binding timestamp_string, Mode=OneWay}"/>
-                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="2" Text="{Binding subject, Mode=OneWay}"
+                            <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Grid.Column="0" Margin="2" Text="{Binding subject, Mode=OneWay}"
                                        FontWeight="{Binding unread, Converter={StaticResource FontWeightConverter}}"/>
+                                <Button Grid.Row="0" Grid.Column="1" Margin="2" ToolTip="Delete" Click="message_list_delete">
+                                    <Image Source="trash.png" Width="12" Height="12"/>
+                                </Button>
+                            </Grid>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>

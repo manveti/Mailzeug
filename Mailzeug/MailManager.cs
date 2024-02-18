@@ -917,7 +917,7 @@ namespace Mailzeug {
             }
             // make sure selection hasn't changed before we show the downloaded message
             if ((this.selected_folder == oldSelFolder) && (this.selected_message == oldSelMsg)) {
-                this.window.message_ctrl.show_message(sel, false);
+                this.window.message_ctrl.show_message(this.selected_folder, sel);
             }
         }
 

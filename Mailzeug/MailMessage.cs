@@ -13,7 +13,7 @@ namespace Mailzeug {
         public DateTimeOffset timestamp;
         protected string _from;
         public byte[] source;
-        public bool read;
+        protected bool _read;
         protected bool _replied;
         public bool deleted;
 
@@ -25,11 +25,22 @@ namespace Mailzeug {
         public string from => this._from;
         public bool loaded => this.source is not null;
 
-        public bool unread => !this.read;
+        public bool unread => !this._read;
+
+        public bool read {
+            get { return this._read; }
+            set {
+                this._read = value;
+                this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.unread)));
+            }
+        }
 
         public bool replied {
             get { return this._replied; }
-            set { this._replied = value; }
+            set {
+                this._replied = value;
+                this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.replied)));
+            }
         }
 
         public MailMessage(IMessageSummary summary) {
