@@ -822,6 +822,18 @@ namespace Mailzeug {
 
         private void handle_count_changed_event(MailFolder folder) {
             // NOTE: deleted messages are handled on the MessageExpunged event; we only need to look for new messages here
+            lock (this.folders_lock) {
+                if (
+                    (folder.imap_folder.Count == folder.count) &&
+                    (folder.imap_folder.UidNext.Value.Id == folder.uid_next) &&
+                    (folder.imap_folder.UidValidity == folder.uid_validity)
+                ) {
+                    this.event_log.Info("Ignoring spurious count changed event for folder {name}", folder.name);
+                    return;
+                }
+                folder.uid_next = folder.imap_folder.UidNext.Value.Id;
+                folder.uid_validity = folder.imap_folder.UidValidity;
+            }
             this.event_log.Info("Folder message count changed: {name}", folder.name);
             lock (this.sync_tasks) {
                 foreach (SyncTask t in this.sync_tasks) {
@@ -924,9 +936,6 @@ namespace Mailzeug {
         public void cancel_idle_mode() {
             lock (this.token_lock) {
                 this.idle_token.Cancel();
-                this.idle_token.Dispose();
-                this.idle_token = new CancellationTokenSource();
-                this.idle_token.Token.ThrowIfCancellationRequested();
             }
         }
 
