@@ -134,6 +134,7 @@ namespace Mailzeug {
             }
             //TODO: determine if message is spam; pass false below if so
             this.window.handle_mark_spam(this.folder, this.message, true);
+            //TODO: change button text
         }
 
         private void do_mark_read(object sender, RoutedEventArgs e) {
@@ -144,7 +145,9 @@ namespace Mailzeug {
                 // can only mark when message showing
                 return;
             }
-            this.window.handle_mark_read(this.folder, this.message, this.message.unread);
+            bool wasUnread = this.message.unread;
+            this.window.handle_mark_read(this.folder, this.message, wasUnread);
+            this.read_but.Content = "Mark as " + (wasUnread ? "Unread" : "Read");
         }
 
         private void do_move(object sender, RoutedEventArgs e) {

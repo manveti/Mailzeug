@@ -164,7 +164,7 @@ namespace Mailzeug {
         }
 
         public void handle_mark_read(MailFolder folder, MailMessage message, bool isRead) {
-            //TODO: push new flag action
+            this.mail_manager.set_message_read(folder, message.id, isRead);
         }
 
         public void handle_move(MailFolder folder, MailMessage message) {

@@ -140,7 +140,34 @@ namespace Mailzeug {
             }
         }
 
-        //TODO: action tasks (push flags, push spam status, move message, expunge deleted, etc.)
+        private abstract class ActionTask : SyncTask {
+            // sync task which represents a user action; always handled at high priority
+            public ActionTask() : base(true) { }
+        }
+
+        private abstract class MessageActionTask : ActionTask {
+            // action task which operates on a specific message
+            public readonly MailFolder folder;
+            public readonly uint id;
+
+            public MessageActionTask(MailFolder folder, uint id) : base() {
+                this.folder = folder;
+                this.id = id;
+            }
+        }
+
+        private class MessageFlagSetTask : MessageActionTask {
+            // push a flag state to a message
+            public readonly MessageFlags flag;
+            public bool value;
+
+            public MessageFlagSetTask(MailFolder folder, uint id, MessageFlags flag, bool value) : base(folder, id) {
+                this.flag = flag;
+                this.value = value;
+            }
+        }
+
+        //TODO: other action tasks (move message, expunge deleted, etc.)
 
         public MailManager(MainWindow window) {
             this.window = window;
@@ -350,7 +377,11 @@ namespace Mailzeug {
                 this.handle_message_contents_fetch_task(messageContentsFetchTask);
                 return;
             }
-            //TODO: action tasks (push flags, push spam status, move message, expunge deleted, etc.)
+            if (task is MessageFlagSetTask messageFlagSetTask) {
+                this.handle_message_flag_set_task(messageFlagSetTask);
+                return;
+            }
+            //TODO: other action tasks (move message, expunge deleted, etc.)
         }
 
         private void handle_full_fetch_task(FullFetchTask task) {
@@ -726,7 +757,66 @@ namespace Mailzeug {
             this.sync_log.Info("Downloaded message {uid} body in {name}", task.id, mzFolder.name);
         }
 
-        //TODO: handlers for action tasks (push flags, push spam status, move message, expunge deleted, etc.)
+        private void handle_message_flag_set_task(MessageFlagSetTask task) {
+            MailFolder mzFolder = task.folder;
+            IMailFolder imapFolder = mzFolder.imap_folder;
+            this.sync_log.Info("Pushing flag {flag}={value} on message {uid} in {folder}", task.flag, task.value, task.id, mzFolder.name);
+            //TODO: error handling
+            imapFolder.Open(FolderAccess.ReadWrite);
+            try {
+                if (task.value) {
+                    imapFolder.AddFlags(new MailKit.UniqueId(task.id), task.flag, true, this.shutdown_token.Token);
+                }
+                else {
+                    imapFolder.RemoveFlags(new MailKit.UniqueId(task.id), task.flag, true, this.shutdown_token.Token);
+                }
+            }
+            catch (OperationCanceledException) {
+                this.sync_log.Info("Terminating sync due to shutdown");
+                return;
+            }
+            finally {
+                if (this.running) {
+                    imapFolder.Close();
+                }
+            }
+            lock (this.token_lock) {
+                this.shutdown_token.Dispose();
+                this.shutdown_token = new CancellationTokenSource();
+                this.shutdown_token.Token.ThrowIfCancellationRequested();
+            }
+            this.sync_log.Info("Pushed flag {flag}={value} on message {uid} in {folder}", task.flag, task.value, task.id, mzFolder.name);
+        }
+
+        private void set_message_flag(MailFolder folder, uint uid, MessageFlags flag, bool value) {
+            this.user_log.Info("Setting {folder}:{uid} {flag} to {value}", folder.name, uid, flag, value);
+            lock (this.sync_tasks) {
+                bool needTask = true;
+                // see if there's an outstanding flag set task for this folder, message, and flag
+                foreach (SyncTask task in this.sync_tasks) {
+                    if ((task is MessageFlagSetTask flagTask) && (flagTask.folder == folder) && (flagTask.id == uid) && (flagTask.flag == flag)) {
+                        // thre's already a task for this flag on this message; update it to this value and we're done
+                        flagTask.value = value;
+                        needTask = false;
+                        break;
+                    }
+                }
+                if (needTask) {
+                    // no matching outstanding task; add a new one
+                    this.sync_tasks.AddFirst(new MessageFlagSetTask(folder, uid, flag, value));
+                }
+            }
+            this.cancel_idle_mode();
+        }
+
+        public void set_message_read(MailFolder folder, uint uid, bool isRead) {
+            this.set_message_flag(folder, uid, MessageFlags.Seen, isRead);
+            lock (this.folders_lock) {
+                folder.set_read(uid, isRead);
+            }
+        }
+
+        //TODO: handlers for other action tasks (move message, expunge deleted, etc.)
 
         private void delete_folder(MailFolder folder) {
             // delete any pending sync tasks on this folder
