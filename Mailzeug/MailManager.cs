@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Data;
 using System.Xml;
@@ -41,6 +42,10 @@ namespace Mailzeug {
         private const string NOTIFY_ARG_ACTION = "action";
         private const string NOTIFY_ACTION_DELETE = "delete";
 
+        private static readonly Regex SENT_FOLDER_EXP = new Regex(@"\bsent\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex JUNK_FOLDER_EXP = new Regex(@"\b(junk|spam)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex TRASH_FOLDER_EXP = new Regex(@"\b(deleted|trash)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
         private readonly MainWindow window;
@@ -54,6 +59,9 @@ namespace Mailzeug {
         public BindingList<MailFolder> folders;
         public MailFolder selected_folder = null;
         public int selected_message = -1;
+        private MailFolder sent_folder = null;
+        private MailFolder junk_folder = null;
+        private MailFolder trash_folder = null;
         private LinkedList<SyncTask> sync_tasks;
         private DateTimeOffset last_force_sync;
         private DateTimeOffset last_full_sync;
@@ -167,7 +175,21 @@ namespace Mailzeug {
             }
         }
 
-        //TODO: other action tasks (move message, expunge deleted, etc.)
+        private class MessageMoveTask : MessageActionTask {
+            // move a message to another folder
+            public MailFolder destination;
+
+            public MessageMoveTask(MailFolder folder, uint id, MailFolder destination) : base(folder, id) {
+                this.destination = destination;
+            }
+        }
+
+        private class MessageDeleteTask : MessageActionTask {
+            // delete a message entirely
+            public MessageDeleteTask(MailFolder folder, uint id) : base(folder, id) { }
+        }
+
+        //TODO: other action tasks (expunge deleted, etc.)
 
         public MailManager(MainWindow window) {
             this.window = window;
@@ -293,6 +315,8 @@ namespace Mailzeug {
             this.client.Disconnected += (obj, args) => this.connect_client();
             this.client.FolderCreated += (obj, args) => this.handle_folder_created_event(args);
             this.connect_client();
+            // do an initial sync before we start processing queue to ensure all folders have an associated IMailFolder
+            this.handle_sync_task(new FullFetchTask(true));
             while (this.running) {
                 SyncTask task = null;
                 DateTimeOffset curTime = DateTimeOffset.Now;
@@ -317,7 +341,6 @@ namespace Mailzeug {
                 }
                 this.sync_log.Info("Idling for new activity");
                 //TODO: error handling
-                //TODO: setup notify for idling
                 this.client.Inbox.Open(FolderAccess.ReadOnly);
                 this.idle_token.CancelAfter(IDLE_SYNC_INTERVAL);
                 try {
@@ -381,7 +404,15 @@ namespace Mailzeug {
                 this.handle_message_flag_set_task(messageFlagSetTask);
                 return;
             }
-            //TODO: other action tasks (move message, expunge deleted, etc.)
+            if (task is MessageMoveTask messageMoveTask) {
+                this.handle_message_move_task(messageMoveTask);
+                return;
+            }
+            if (task is MessageDeleteTask messageDeleteTask) {
+                this.handle_message_delete_task(messageDeleteTask);
+                return;
+            }
+            //TODO: other action tasks (expunge deleted, etc.)
         }
 
         private void handle_full_fetch_task(FullFetchTask task) {
@@ -409,6 +440,7 @@ namespace Mailzeug {
             List<MailFolder> deleted = new List<MailFolder>(this.folders);
             bool dirty = false;
             string messagesDir = this.messages_dir;
+            bool gotSent = false, gotJunk = false, gotTrash = false;
             lock (this.folders_lock) {
                 foreach (IMailFolder imapFolder in folders) {
                     int weight = get_weight(imapFolder);
@@ -425,6 +457,18 @@ namespace Mailzeug {
                         dirty = true;
                     }
                     this.set_imap_folder(mzFolder, imapFolder);
+                    if (mzFolder.is_sent) {
+                        this.sent_folder = mzFolder;
+                        gotSent = true;
+                    }
+                    if (mzFolder.is_junk) {
+                        this.junk_folder = mzFolder;
+                        gotJunk = true;
+                    }
+                    if (mzFolder.is_trash) {
+                        this.trash_folder = mzFolder;
+                        gotTrash = true;
+                    }
                     if (
                         (task.force) ||
                         (imapFolder.UidValidity != mzFolder.uid_validity) ||
@@ -463,6 +507,25 @@ namespace Mailzeug {
                     this.sync_log.Info("Deleting folder {name}", folder.name);
                     this.delete_folder(folder);
                     dirty = true;
+                }
+                if ((!gotSent) || (!gotJunk) || (!gotTrash)) {
+                    foreach (MailFolder folder in this.folders) {
+                        if ((!gotSent) && (SENT_FOLDER_EXP.IsMatch(folder.name))) {
+                            this.sent_folder = folder;
+                            gotSent = true;
+                        }
+                        if ((!gotJunk) && (JUNK_FOLDER_EXP.IsMatch(folder.name))) {
+                            this.junk_folder = folder;
+                            gotJunk = true;
+                        }
+                        if ((!gotTrash) && (TRASH_FOLDER_EXP.IsMatch(folder.name))) {
+                            this.trash_folder = folder;
+                            gotTrash = true;
+                        }
+                        if ((gotSent) && (gotJunk) && (gotTrash)) {
+                            break;
+                        }
+                    }
                 }
             }
             if (dirty) {
@@ -546,6 +609,7 @@ namespace Mailzeug {
                 MailFolder mzFolder = new MailFolder(this.messages_dir, task.folder.FullName, weight);
                 this.folders.Insert(idx, mzFolder);
                 this.set_imap_folder(mzFolder, task.folder);
+                //TODO: handle changes to is_sent, is_junk, or is_trash
                 this.sync_log.Info("Scheduling sync of folder {name}", task.folder.FullName);
                 lock (this.sync_tasks) {
                     this.sync_tasks.AddLast(new FolderFetchTask(mzFolder));
@@ -788,35 +852,78 @@ namespace Mailzeug {
             this.sync_log.Info("Pushed flag {flag}={value} on message {uid} in {folder}", task.flag, task.value, task.id, mzFolder.name);
         }
 
-        private void set_message_flag(MailFolder folder, uint uid, MessageFlags flag, bool value) {
-            this.user_log.Info("Setting {folder}:{uid} {flag} to {value}", folder.name, uid, flag, value);
-            lock (this.sync_tasks) {
-                bool needTask = true;
-                // see if there's an outstanding flag set task for this folder, message, and flag
-                foreach (SyncTask task in this.sync_tasks) {
-                    if ((task is MessageFlagSetTask flagTask) && (flagTask.folder == folder) && (flagTask.id == uid) && (flagTask.flag == flag)) {
-                        // thre's already a task for this flag on this message; update it to this value and we're done
-                        flagTask.value = value;
-                        needTask = false;
-                        break;
-                    }
-                }
-                if (needTask) {
-                    // no matching outstanding task; add a new one
-                    this.sync_tasks.AddFirst(new MessageFlagSetTask(folder, uid, flag, value));
+        private void handle_message_move_task(MessageMoveTask task) {
+            MailFolder mzFolder = task.folder, mzDest = task.destination;
+            IMailFolder imapFolder = mzFolder.imap_folder, imapDest = mzDest.imap_folder;
+            if (mzFolder == mzDest) {
+                this.sync_log.Info("Skipping noop move of {folder}:{uid}", mzFolder.name, task.id);
+                return;
+            }
+            this.sync_log.Info("Moving {folder}:{uid} to {dest}", mzFolder.name, task.id, mzDest.name);
+            MailKit.UniqueId? newUid;
+            //TODO: error handling
+            imapFolder.Open(FolderAccess.ReadWrite);
+            try {
+                newUid = imapFolder.MoveTo(new MailKit.UniqueId(task.id), imapDest, this.shutdown_token.Token);
+            }
+            catch (OperationCanceledException) {
+                this.sync_log.Info("Terminating move due to shutdown");
+                return;
+            }
+            finally {
+                if (this.running) {
+                    imapFolder.Close();
                 }
             }
-            this.cancel_idle_mode();
-        }
-
-        public void set_message_read(MailFolder folder, uint uid, bool isRead) {
-            this.set_message_flag(folder, uid, MessageFlags.Seen, isRead);
-            lock (this.folders_lock) {
-                folder.set_read(uid, isRead);
+            lock (this.token_lock) {
+                this.shutdown_token.Dispose();
+                this.shutdown_token = new CancellationTokenSource();
+                this.shutdown_token.Token.ThrowIfCancellationRequested();
             }
+            // move message in local cache
+            if (newUid is not null) {
+                lock (this.folders_lock) {
+                    MailMessage msg = mzFolder.get_message(task.id);
+                    mzFolder.remove_message(task.id);
+                    msg.id = newUid.Value.Id;
+                    msg.restore_folder = mzFolder;
+                    mzDest.add_message(msg);
+                }
+            }
+            this.sync_log.Info("Moved {folder}:{uid} to {dest}", mzFolder.name, task.id, mzDest.name);
         }
 
-        //TODO: handlers for other action tasks (move message, expunge deleted, etc.)
+        private void handle_message_delete_task(MessageDeleteTask task) {
+            MailFolder mzFolder = task.folder;
+            IMailFolder imapFolder = mzFolder.imap_folder;
+            this.sync_log.Info("Permanently deleting {folder}:{uid}", mzFolder.name, task.id);
+            MailKit.UniqueId uid = new MailKit.UniqueId(task.id);
+            List<MailKit.UniqueId> uids = new List<MailKit.UniqueId>();
+            uids.Add(uid);
+            //TODO: error handling
+            imapFolder.Open(FolderAccess.ReadWrite);
+            try {
+                imapFolder.AddFlags(uid, MessageFlags.Deleted, true, this.shutdown_token.Token);
+                imapFolder.Expunge(uids, this.shutdown_token.Token);
+            }
+            catch (OperationCanceledException) {
+                this.sync_log.Info("Terminating delete due to shutdown");
+                return;
+            }
+            finally {
+                if (this.running) {
+                    imapFolder.Close();
+                }
+            }
+            lock (this.token_lock) {
+                this.shutdown_token.Dispose();
+                this.shutdown_token = new CancellationTokenSource();
+                this.shutdown_token.Token.ThrowIfCancellationRequested();
+            }
+            this.sync_log.Info("Permanently deleted {folder}:{uid}", mzFolder.name, task.id);
+        }
+
+        //TODO: handlers for other action tasks (expunge deleted, etc.)
 
         private void delete_folder(MailFolder folder) {
             // delete any pending sync tasks on this folder
@@ -863,6 +970,9 @@ namespace Mailzeug {
             imapFolder.CountChanged += (obj, args) => this.handle_count_changed_event(mzFolder);
             imapFolder.MessageExpunged += (obj, args) => this.handle_message_expunged_event(mzFolder, args);
             imapFolder.MessageFlagsChanged += (obj, args) => this.handle_message_flags_changed_event(mzFolder, args);
+            mzFolder.is_sent = imapFolder.Attributes.HasFlag(FolderAttributes.Sent);
+            mzFolder.is_junk = imapFolder.Attributes.HasFlag(FolderAttributes.Junk);
+            mzFolder.is_trash = imapFolder.Attributes.HasFlag(FolderAttributes.Trash);
         }
 
         private void handle_folder_created_event(FolderCreatedEventArgs args) {
@@ -1070,6 +1180,117 @@ namespace Mailzeug {
                 return;
             }
             this.window.Dispatcher.Invoke(() => this.select_message(folder, msgId));
+        }
+
+        private void set_message_flag(MailFolder folder, MailMessage msg, MessageFlags flag, bool value) {
+            uint uid = msg.id;
+            this.user_log.Info("Setting {folder}:{uid} {flag} to {value}", folder.name, uid, flag, value);
+            lock (this.sync_tasks) {
+                bool needTask = true;
+                // see if there's an outstanding flag set task for this folder, message, and flag
+                foreach (SyncTask task in this.sync_tasks) {
+                    if ((task is MessageFlagSetTask flagTask) && (flagTask.folder == folder) && (flagTask.id == uid) && (flagTask.flag == flag)) {
+                        // thre's already a task for this flag on this message; update it to this value and we're done
+                        flagTask.value = value;
+                        needTask = false;
+                        break;
+                    }
+                }
+                if (needTask) {
+                    // no matching outstanding task; add a new one
+                    this.sync_tasks.AddFirst(new MessageFlagSetTask(folder, uid, flag, value));
+                }
+            }
+            this.cancel_idle_mode();
+        }
+
+        public void set_message_read(MailFolder folder, MailMessage msg, bool isRead) {
+            this.set_message_flag(folder, msg, MessageFlags.Seen, isRead);
+            lock (this.folders_lock) {
+                folder.set_read(msg.id, isRead);
+            }
+        }
+
+        public void move_message(MailFolder folder, MailMessage msg, MailFolder dest) {
+            uint uid = msg.id;
+            this.user_log.Info("Moving {folder}:{uid} to {dest}", folder.name, uid, dest.name);
+            lock (this.sync_tasks) {
+                bool needTask = true;
+                LinkedListNode<SyncTask> insertAfter = null;
+                // see if there's an outstanding move task for this message
+                for (LinkedListNode<SyncTask> taskNode = this.sync_tasks.First; taskNode != null; taskNode = taskNode.Next) {
+                    SyncTask task = taskNode.Value;
+                    if ((task is MessageMoveTask moveTask) && (moveTask.folder == folder) && (moveTask.id == uid)) {
+                        // there's already a move task for this message; update it to new destination and we're done
+                        moveTask.destination = dest;
+                        needTask = false;
+                        break;
+                    }
+                    // also see if there are any other outstanding tasks on this message; let them resolve before we move message
+                    if (
+                        ((task is MessageContentsFetchTask fetchTask) && (fetchTask.folder == folder) && (fetchTask.id == uid)) ||
+                        ((task is MessageActionTask msgTask) && (msgTask.folder == folder) && (msgTask.id == uid))
+                    ) {
+                        insertAfter = taskNode;
+                    }
+                }
+                if (needTask) {
+                    // no matching outstanding task; add a new one
+                    MessageMoveTask newTask = new MessageMoveTask(folder, uid, dest);
+                    if (insertAfter is null) {
+                        // also no other outstanding tasks on this message; add to front of queue
+                        this.sync_tasks.AddFirst(newTask);
+                    }
+                    else {
+                        // process any other outstanding tasks on this message before moving it so we don't have to change folder and uid
+                        this.sync_tasks.AddAfter(insertAfter, newTask);
+                    }
+                }
+            }
+            this.cancel_idle_mode();
+        }
+
+        //TODO: mark as junk: for outlook, just move to junk folder
+
+        public void delete_message(MailFolder folder, MailMessage msg) {
+            if ((folder.is_junk) || (folder.is_trash)) {
+                // delete outright
+                this.user_log.Info("Permanently deleting {folder}:{uid}", folder.name, msg.id);
+                lock (this.sync_tasks) {
+                    // remove any outstanding actions on this message
+                    LinkedListNode<SyncTask> taskNode = this.sync_tasks.First;
+                    while (taskNode is not null) {
+                        if (
+                            ((taskNode.Value is MessageContentsFetchTask fetchTask) && (fetchTask.folder == folder) && (fetchTask.id == msg.id)) ||
+                            ((taskNode.Value is MessageActionTask msgTask) && (msgTask.folder == folder) && (msgTask.id == msg.id))
+                        ) {
+                            this.sync_tasks.Remove(taskNode);
+                        }
+                        taskNode = taskNode.Next;
+                    }
+                    // add delete task
+                    this.sync_tasks.AddFirst(new MessageDeleteTask(folder, msg.id));
+                }
+                lock (this.folders_lock) {
+                    folder.set_deleted(msg.id, true);
+                }
+                this.cancel_idle_mode();
+                return;
+            }
+            // message not in junk or trash folder; move to trash
+            if (this.trash_folder is null) {
+                this.user_log.Error("Cannot delete {folder}:{uid}: no trash folder", folder.name, msg.id);
+                return;
+            }
+            this.move_message(folder, msg, this.trash_folder);
+        }
+
+        public void restore_message(MailFolder folder, MailMessage msg) {
+            if (msg.restore_folder is null) {
+                this.user_log.Error("Cannot restore {folder}:{uid}: no restore folder", folder.name, msg.id);
+                return;
+            }
+            this.move_message(folder, msg, msg.restore_folder);
         }
 
         //TODO: other handlers

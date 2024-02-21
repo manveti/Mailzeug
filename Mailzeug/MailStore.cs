@@ -248,9 +248,9 @@ namespace Mailzeug {
             this.message_display.Insert(idx, msg);
         }
 
-        public MailMessage add_message(MailKit.IMessageSummary summary) {
+        public MailMessage add_message(MailMessage msg) {
             // returns message if message is new, null if not
-            uint uid = summary.UniqueId.Id;
+            uint uid = msg.id;
             MailMessage newMessage = null;
             bool dirty = true;
             lock (this.message_lock) {
@@ -259,11 +259,11 @@ namespace Mailzeug {
                     if (this.messages[uid].unread) {
                         this.unread -= 1;
                     }
-                    dirty = this.messages[uid].update(summary);
+                    dirty = this.messages[uid].update(msg);
                 }
                 else {
                     // new message; add it
-                    newMessage = new MailMessage(summary);
+                    newMessage = msg;
                     this.messages[uid] = newMessage;
                 }
                 if (this.messages[uid].unread) {
@@ -280,6 +280,15 @@ namespace Mailzeug {
                 }
             }
             return newMessage;
+        }
+
+        public MailMessage get_message(uint uid) {
+            lock (this.message_lock) {
+                if (!this.messages.ContainsKey(uid)) {
+                    return null;
+                }
+                return this.messages[uid];
+            }
         }
 
         public void remove_message(uint uid) {

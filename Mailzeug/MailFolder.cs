@@ -11,6 +11,9 @@ namespace Mailzeug {
         [NonSerialized]
         protected string messages_dir;
         protected string _name;
+        public bool is_sent = false;
+        public bool is_junk = false;
+        public bool is_trash = false;
         [NonSerialized]
         protected MailStore store;
         public int weight;
@@ -85,10 +88,18 @@ namespace Mailzeug {
             this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
         }
 
-        public MailMessage add_message(IMessageSummary summary) {
-            MailMessage newMessage = this.store.add_message(summary);
+        public MailMessage add_message(MailMessage msg) {
+            MailMessage newMessage = this.store.add_message(msg);
             this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.counts)));
             return newMessage;
+        }
+
+        public MailMessage add_message(IMessageSummary summary) {
+            return this.add_message(new MailMessage(summary));
+        }
+
+        public MailMessage get_message(uint uid) {
+            return this.store.get_message(uid);
         }
 
         public void remove_message(uint uid) {

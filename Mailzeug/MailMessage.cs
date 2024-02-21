@@ -8,7 +8,7 @@ using MimeKit;
 namespace Mailzeug {
     [Serializable]
     public class MailMessage : INotifyPropertyChanged {
-        public readonly uint id;
+        public uint id;
         protected string _subject;
         public DateTimeOffset timestamp;
         protected string _from;
@@ -16,6 +16,7 @@ namespace Mailzeug {
         protected bool _read;
         protected bool _replied;
         public bool deleted;
+        public MailFolder restore_folder;
 
         [field: NonSerialized]
         public event PropertyChangedEventHandler PropertyChanged;
@@ -46,42 +47,43 @@ namespace Mailzeug {
         public MailMessage(IMessageSummary summary) {
             this.id = summary.UniqueId.Id;
             this.source = null;
-            this.update(summary);
+            this._subject = summary.Envelope.Subject;
+            this.timestamp = summary.Date;
+            this._from = summary.Envelope.From.ToString();
+            this._read = (summary.Flags & MessageFlags.Seen) != 0;
+            this._replied = (summary.Flags & MessageFlags.Answered) != 0;
+            this.deleted = (summary.Flags & MessageFlags.Deleted) != 0;
         }
 
-        public bool update(IMessageSummary summary) {
+        public bool update(MailMessage msg) {
             bool dirty = false;
-            if (summary.Envelope.Subject != this._subject) {
-                this._subject = summary.Envelope.Subject;
+            if (msg._subject != this._subject) {
+                this._subject = msg._subject;
                 dirty = true;
                 this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.subject)));
             }
-            if (summary.Date != this.timestamp) {
-                this.timestamp = summary.Date;
+            if (msg.timestamp != this.timestamp) {
+                this.timestamp = msg.timestamp;
                 this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.timestamp_string)));
                 dirty = true;
             }
-            string from = summary.Envelope.From.ToString();
-            if (from != this._from) {
-                this._from = from;
+            if (msg._from != this._from) {
+                this._from = msg._from;
                 this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.from)));
                 dirty = true;
             }
-            bool read = (summary.Flags & MessageFlags.Seen) != 0;
-            if (read != this.read) {
-                this.read = read;
+            if (msg._read != this._read) {
+                this._read = msg._read;
                 this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.unread)));
                 dirty = true;
             }
-            bool replied = (summary.Flags & MessageFlags.Answered) != 0;
-            if (replied != this._replied) {
-                this._replied = replied;
+            if (msg._replied != this._replied) {
+                this._replied = msg._replied;
                 this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.replied)));
                 dirty = true;
             }
-            bool deleted = (summary.Flags & MessageFlags.Deleted) != 0;
-            if (deleted != this.deleted) {
-                this.deleted = deleted;
+            if (msg.deleted != this.deleted) {
+                this.deleted = msg.deleted;
                 dirty = true;
             }
             return dirty;

@@ -164,14 +164,14 @@ namespace Mailzeug {
         }
 
         public void handle_mark_read(MailFolder folder, MailMessage message, bool isRead) {
-            this.mail_manager.set_message_read(folder, message.id, isRead);
+            this.mail_manager.set_message_read(folder, message, isRead);
         }
 
         public void handle_move(MailFolder folder, MailMessage message) {
             //TODO: prompt for destination folder; move if destination selected and different from current folder
         }
         public void handle_delete(MailFolder folder, MailMessage message) {
-            //TODO: if folder is trash/junk, delete; else, move to trash
+            this.mail_manager.delete_message(folder, message);
         }
     }
 
