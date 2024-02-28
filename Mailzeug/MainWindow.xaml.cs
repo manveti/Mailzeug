@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -168,8 +169,28 @@ namespace Mailzeug {
         }
 
         public void handle_move(MailFolder folder, MailMessage message) {
-            //TODO: prompt for destination folder; move if destination selected and different from current folder
+            List<string> folders = new List<string>();
+            Dictionary<string, MailFolder> foldersByName = new Dictionary<string, MailFolder>();
+            string selected = null;
+            lock (this.mail_manager.folders_lock) {
+                foreach (MailFolder fld in this.mail_manager.folders) {
+                    if (fld == folder) {
+                        continue;
+                    }
+                    folders.Add(fld.name);
+                    foldersByName[fld.name] = fld;
+                    if (fld == message.restore_folder) {
+                        selected = fld.name;
+                    }
+                }
+            }
+            string choice = InputDialog.prompt(this, "Folder:", folders, "Move to...", selected);
+            if ((choice is null) || (!foldersByName.ContainsKey(choice))) {
+                return;
+            }
+            this.mail_manager.move_message(folder, message, foldersByName[choice]);
         }
+
         public void handle_delete(MailFolder folder, MailMessage message) {
             this.mail_manager.delete_message(folder, message);
         }
