@@ -81,14 +81,8 @@ namespace Mailzeug {
         }
 
         private void open_options(object sender, EventArgs e) {
-            ConfigWindow dlg = new ConfigWindow();
+            ConfigWindow dlg = new ConfigWindow(this.config);
             dlg.Owner = this;
-            dlg.imap_server_box.Text = this.config.imap_server;
-            dlg.imap_port_box.Text = this.config.imap_port.ToString("d");
-            dlg.smtp_server_box.Text = this.config.smtp_server;
-            dlg.smtp_port_box.Text = this.config.smtp_port.ToString("d");
-            dlg.username_box.Text = this.config.username ?? "";
-            dlg.password_box.Password = this.config.password ?? "";
             dlg.ShowDialog();
             if (!dlg.valid) {
                 return;
@@ -103,6 +97,12 @@ namespace Mailzeug {
             this.config.smtp_port = int.Parse(dlg.smtp_port_box.Text);
             this.config.username = dlg.username_box.Text;
             this.config.password = dlg.password_box.Password;
+            if (dlg.display_name_box.Text != dlg.username_box.Text) {
+                this.config.display_name = dlg.display_name_box.Text;
+            }
+            else {
+                this.config.display_name = null;
+            }
             this.config.save();
         }
 
@@ -145,19 +145,23 @@ namespace Mailzeug {
         }
 
         public void handle_new_message() {
-            //TODO: new message window
+            ComposeWindow msgWin = new ComposeWindow(this);
+            msgWin.Show();
         }
 
         public void handle_reply(MailFolder folder, MailMessage message) {
-            //TODO: new message window with reply association; mark message replied if reply sent
+            ComposeWindow msgWin = new ComposeWindow(this, message);
+            msgWin.Show();
         }
 
         public void handle_reply_all(MailFolder folder, MailMessage message) {
-            //TODO: new message window with reply association; mark message replied if reply sent
+            ComposeWindow msgWin = new ComposeWindow(this, message, replyAll: true);
+            msgWin.Show();
         }
 
         public void handle_forward(MailFolder folder, MailMessage message) {
-            //TODO: new message window with forward association
+            ComposeWindow msgWin = new ComposeWindow(this, message, forward: true);
+            msgWin.Show();
         }
 
         public void handle_mark_spam(MailFolder folder, MailMessage message, bool isSpam) {

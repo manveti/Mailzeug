@@ -1,0 +1,40 @@
+﻿<Window x:Class="Mailzeug.ComposeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:Mailzeug"
+        mc:Ignorable="d"
+        Title="New Message" Width="800" Height="450" WindowStartupLocation="CenterOwner" Closing="on_close">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Label Grid.Row="0" Grid.Column="0" Margin="1" Content="Subject:"/>
+        <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" Margin="1" Name="subject_box" TextChanged="on_change"/>
+        <Label Grid.Row="1" Grid.Column="0" Margin="1" Content="To:"/>
+        <TextBox Grid.Row="1" Grid.Column="1" Margin="1" Name="to_box" TextChanged="on_change"/>
+        <Button Grid.Row="1" Grid.Column="2" Margin="1" Name="cc_but" Content="Show CC/BCC" Click="toggle_cc"/>
+        <Label Grid.Row="2" Grid.Column="0" Margin="1" Name="cc_lbl" Content="CC:" Visibility="Collapsed"/>
+        <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="1" Name="cc_box" Visibility="Collapsed" TextChanged="on_change"/>
+        <Label Grid.Row="3" Grid.Column="0" Margin="1" Name="bcc_lbl" Content="BCC:" Visibility="Collapsed"/>
+        <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="1" Name="bcc_box" Visibility="Collapsed" TextChanged="on_change"/>
+        <Label Grid.Row="4" Grid.Column="0" Margin="1" Content="From:"/>
+        <TextBox Grid.Row="4" Grid.Column="1" Margin="1" Name="from_box" IsEnabled="False"/>
+        <Button Grid.Row="4" Grid.Column="2" Margin="1" Content="Send" Click="do_send"/>
+
+        <TextBox Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3" Margin="1" Name="body_box"
+                 AcceptsReturn="True" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" TextChanged="on_body_change"/>
+    </Grid>
+</Window>

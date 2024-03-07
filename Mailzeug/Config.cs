@@ -18,6 +18,7 @@ namespace Mailzeug {
         protected byte[] key;
         protected byte[] username_enc;
         protected byte[] password_enc;
+        protected string _display_name;
 
         public string username {
             get { return this.decrypt(this.username_enc); }
@@ -27,6 +28,11 @@ namespace Mailzeug {
         public string password {
             get { return this.decrypt(this.password_enc); }
             set { this.password_enc = this.encrypt(value); }
+        }
+
+        public string display_name {
+            get { return this._display_name ?? this.username; }
+            set { this._display_name = value; }
         }
 
         public Config() {
@@ -41,6 +47,7 @@ namespace Mailzeug {
             this.smtp_port = 587;
             this.username_enc = null;
             this.password_enc = null;
+            this.display_name = null;
             if (resetKey) {
                 this.reset_key();
             }

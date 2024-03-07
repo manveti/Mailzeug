@@ -9,6 +9,7 @@ namespace Mailzeug {
     [Serializable]
     public class MailMessage : INotifyPropertyChanged {
         public uint id;
+        public string message_id;
         protected string _subject;
         public DateTimeOffset timestamp;
         protected string _from;
@@ -46,6 +47,7 @@ namespace Mailzeug {
 
         public MailMessage(IMessageSummary summary) {
             this.id = summary.UniqueId.Id;
+            this.message_id = summary.Envelope.MessageId;
             this.source = null;
             this._subject = summary.Envelope.Subject;
             this.timestamp = summary.Date;

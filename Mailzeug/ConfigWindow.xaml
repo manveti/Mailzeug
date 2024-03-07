@@ -21,6 +21,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <Label Grid.Row="0" Grid.Column="0" Margin="1" Content="IMAP Server:"/>
@@ -32,12 +33,14 @@
         <Label Grid.Row="3" Grid.Column="0" Margin="1" Content="SMTP Port:"/>
         <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="smtp_port_box"/>
         <Label Grid.Row="4" Grid.Column="0" Margin="1" Content="Username:"/>
-        <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="username_box"/>
+        <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="username_box" TextChanged="on_username_change"/>
         <Label Grid.Row="5" Grid.Column="0" Margin="1" Content="Password:"/>
         <PasswordBox Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="password_box"/>
+        <Label Grid.Row="6" Grid.Column="0" Margin="1" Content="Display Name:"/>
+        <TextBox Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3" Margin="1" Name="display_name_box" TextChanged="on_display_name_change"/>
 
-        <Button Grid.Row="6" Grid.Column="0" Margin="1" Content="Reset" Click="do_reset"/>
-        <Button Grid.Row="6" Grid.Column="2" Margin="1" Content="Save" Click="do_ok"/>
-        <Button Grid.Row="6" Grid.Column="3" Margin="1" Content="Cancel" Click="do_cancel"/>
+        <Button Grid.Row="7" Grid.Column="0" Margin="1" Content="Reset" Click="do_reset"/>
+        <Button Grid.Row="7" Grid.Column="2" Margin="1" Content="Save" Click="do_ok"/>
+        <Button Grid.Row="7" Grid.Column="3" Margin="1" Content="Cancel" Click="do_cancel"/>
     </Grid>
 </Window>
